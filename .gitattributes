@@ -1,0 +1,2 @@
+# The dictionary is parsed line by line; keep it LF everywhere.
+*.txt text eol=lf
