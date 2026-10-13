@@ -126,3 +126,12 @@ export const RANKS = [
 
 export const PROPHECY_BONUS_BASE = 500;
 export const PROPHECY_BONUS_PER_LEVEL = 250;
+
+/** Action mode starts with this many bottom rows filled in every column. */
+export const ACTION_START_ROWS = 4;
+/** Time between dropped stones at level 1, how much faster each level gets, and the floor. */
+export const ACTION_DROP_START_MS = 2400;
+export const ACTION_DROP_SPEEDUP = 0.9;
+export const ACTION_DROP_MIN_MS = 700;
+/** In Action mode the shuffle spell costs this many extra stones instead of a curse. */
+export const ACTION_SHUFFLE_DROPS = 3;

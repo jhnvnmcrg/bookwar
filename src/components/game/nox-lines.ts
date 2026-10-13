@@ -3,6 +3,8 @@ import {
 	type Board,
 	crystalSpec,
 	type GameEvent,
+	type GameMode,
+	type GameState,
 	type PlayError,
 	ROWS,
 	rowOf,
@@ -14,10 +16,20 @@ export interface NoxLine {
 	readonly text: string;
 }
 
-export const OPENING_LINE: NoxLine = {
-	mood: "idle",
-	text: "Link touching stones to spell a word. Long words forge crystals; short ones invite curses.",
-};
+/** Below this many empty cells in Action mode, Nox starts warning. */
+export const LOW_SPACE = 7;
+
+export function openingLine(mode: GameMode): NoxLine {
+	return mode === "action"
+		? {
+				mood: "idle",
+				text: "Stones keep falling. Spell words to clear room before the board fills to the top.",
+			}
+		: {
+				mood: "idle",
+				text: "Link touching stones to spell a word. Long words forge crystals; short ones invite curses.",
+			};
+}
 
 const points = (value: number) => value.toLocaleString("en-US");
 
@@ -32,9 +44,41 @@ export function nearestCurse(board: Board): number | null {
 	return nearest;
 }
 
+export function emptyCells(board: Board): number {
+	return board.filter((cell) => cell === null).length;
+}
+
+/** The warning for the current board, if it's in danger. */
+export function dangerLine(state: GameState): NoxLine | null {
+	if (state.mode === "action") {
+		const space = emptyCells(state.board);
+		if (space === 0) {
+			return {
+				mood: "worried",
+				text: "The board is full! The next stone will bury your tower. Cast a word now!",
+			};
+		}
+		return space <= LOW_SPACE
+			? {
+					mood: "worried",
+					text: `Only ${space} ${space === 1 ? "space" : "spaces"} left. Long words clear the most room.`,
+				}
+			: null;
+	}
+	const curse = nearestCurse(state.board);
+	if (curse === null || curse > 2) return null;
+	return {
+		mood: "worried",
+		text:
+			curse === 1
+				? "A curse is one row from the bottom. Spell a word through it now!"
+				: "A curse is two rows from the bottom. Use it in your next words.",
+	};
+}
+
 export function lineForMove(
 	events: readonly GameEvent[],
-	board: Board,
+	state: GameState,
 ): NoxLine {
 	const find = <T extends GameEvent["type"]>(type: T) =>
 		events.find(
@@ -45,6 +89,12 @@ export function lineForMove(
 		return {
 			mood: "sad",
 			text: "A curse reached the bottom row. Your tower has fallen.",
+		};
+	}
+	if (find("buried")) {
+		return {
+			mood: "sad",
+			text: "A stone had nowhere to land. Your tower is buried.",
 		};
 	}
 	const prophecy = find("prophecy-fulfilled");
@@ -58,19 +108,14 @@ export function lineForMove(
 	if (levelUp) {
 		return {
 			mood: "wow",
-			text: `You've risen to ${levelUp.rank}. The new prophecy is “${levelUp.prophecy}”.`,
-		};
-	}
-	const curse = nearestCurse(board);
-	if (curse !== null && curse <= 2) {
-		return {
-			mood: "worried",
 			text:
-				curse === 1
-					? "A curse is one row from the bottom. Spell a word through it now!"
-					: "A curse is two rows from the bottom. Use it in your next words.",
+				state.mode === "action"
+					? `You've risen to ${levelUp.rank}. Stones will fall faster now.`
+					: `You've risen to ${levelUp.rank}. The new prophecy is “${levelUp.prophecy}”.`,
 		};
 	}
+	const danger = dangerLine(state);
+	if (danger) return danger;
 	const crystal = find("crystal-formed");
 	if (crystal) {
 		const spec = crystalSpec(crystal.tier);
@@ -86,7 +131,9 @@ export function lineForMove(
 		};
 	}
 	if (find("shuffled")) {
-		return { mood: "idle", text: "Fresh letters, and a curse came with them." };
+		return state.mode === "action"
+			? { mood: "idle", text: "Fresh letters, and three more stones fell." }
+			: { mood: "idle", text: "Fresh letters, and a curse came with them." };
 	}
 	const word = find("word");
 	if (word) {
@@ -103,7 +150,7 @@ export function lineForMove(
 				}
 			: { mood: "idle", text: `“${word.word}” for ${points(word.score)}.` };
 	}
-	return OPENING_LINE;
+	return openingLine(state.mode);
 }
 
 export function lineForRejection(error: PlayError, word: string): NoxLine {
@@ -118,7 +165,7 @@ export function lineForRejection(error: PlayError, word: string): NoxLine {
 		case "game-over":
 			return {
 				mood: "sad",
-				text: "The tower has fallen. Start a new game to keep playing.",
+				text: "This game is over. Start a new one to keep playing.",
 			};
 		default:
 			return {

@@ -10,11 +10,17 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ScoresRouteImport } from './routes/scores'
 import { Route as SoloModeRouteImport } from './routes/solo.$mode'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ScoresRoute = ScoresRouteImport.update({
+  id: '/scores',
+  path: '/scores',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SoloModeRoute = SoloModeRouteImport.update({
@@ -25,27 +31,31 @@ const SoloModeRoute = SoloModeRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/scores': typeof ScoresRoute
   '/solo/$mode': typeof SoloModeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/scores': typeof ScoresRoute
   '/solo/$mode': typeof SoloModeRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/scores': typeof ScoresRoute
   '/solo/$mode': typeof SoloModeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/solo/$mode'
+  fullPaths: '/' | '/scores' | '/solo/$mode'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/solo/$mode'
-  id: '__root__' | '/' | '/solo/$mode'
+  to: '/' | '/scores' | '/solo/$mode'
+  id: '__root__' | '/' | '/scores' | '/solo/$mode'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ScoresRoute: typeof ScoresRoute
   SoloModeRoute: typeof SoloModeRoute
 }
 
@@ -56,6 +66,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/scores': {
+      id: '/scores'
+      path: '/scores'
+      fullPath: '/scores'
+      preLoaderRoute: typeof ScoresRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/solo/$mode': {
@@ -70,6 +87,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ScoresRoute: ScoresRoute,
   SoloModeRoute: SoloModeRoute,
 }
 export const routeTree = rootRouteImport

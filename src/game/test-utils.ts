@@ -5,8 +5,8 @@ import type { Board, Cell, CrystalTier, GameState, Letter } from "./types";
 
 /**
  * One string per row, top row first, one space-separated token per column.
- * Token: a letter ("qu" allowed), "!" prefix = curse, trailing 1–4 = crystal tier.
- * Example row: "c a t !e qu s2 e"
+ * Token: a letter ("qu" allowed), "!" prefix = curse, trailing 1–4 = crystal tier, "." = empty.
+ * Example row: "c a t !e qu s2 ."
  */
 export function boardFromRows(rows: readonly string[]): Board {
 	if (rows.length !== ROWS) throw new Error(`need ${ROWS} rows`);
@@ -16,6 +16,7 @@ export function boardFromRows(rows: readonly string[]): Board {
 		if (tokens.length !== COLS)
 			throw new Error(`row ${row} needs ${COLS} tokens`);
 		tokens.forEach((token, col) => {
+			if (token === ".") return;
 			const match = /^(!?)([a-z]+?)([1-4]?)$/.exec(token);
 			if (!match) throw new Error(`bad token "${token}"`);
 			const [, curse, letter, tier] = match;
@@ -49,6 +50,22 @@ export function classicWith(
 		...overrides,
 	};
 }
+
+/** A fresh Action game with the given board swapped in. */
+export function actionWith(
+	board: Board,
+	overrides: Partial<GameState> = {},
+): GameState {
+	return {
+		...createGame({ mode: "action", seed: "test" }),
+		board,
+		nextId: 1000,
+		...overrides,
+	};
+}
+
+export const stoneCount = (board: Board): number =>
+	board.filter((cell) => cell !== null).length;
 
 /** Cell indexes for [col, row] pairs. */
 export function cells(...coords: readonly [number, number][]): number[] {

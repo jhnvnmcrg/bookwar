@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { GameEvent } from "#/game";
-import { boardFromRows } from "#/game/test-utils";
+import { actionWith, boardFromRows, classicWith } from "#/game/test-utils";
 import {
+	dangerLine,
+	emptyCells,
 	lineForMove,
 	lineForRejection,
 	nearestCurse,
-	OPENING_LINE,
+	openingLine,
 } from "./nox-lines";
 
-const plain = boardFromRows(Array(8).fill("e e e e e e e"));
+const FULL = "e e e e e e e";
+const EMPTY = ". . . . . . .";
+const plain = classicWith(boardFromRows(Array(8).fill(FULL)));
 const word: GameEvent = {
 	type: "word",
 	word: "cat",
@@ -20,23 +24,24 @@ const word: GameEvent = {
 
 describe("nearestCurse", () => {
 	it("measures rows to the bottom from the lowest curse", () => {
-		const rows = Array(8).fill("e e e e e e e");
+		const rows = Array(8).fill(FULL);
 		rows[2] = "e !e e e e e e";
 		rows[5] = "e e e !e e e e";
 		expect(nearestCurse(boardFromRows(rows))).toBe(2);
-		expect(nearestCurse(plain)).toBeNull();
+		expect(nearestCurse(plain.board)).toBeNull();
 	});
 });
 
 describe("lineForMove", () => {
-	it("puts the tower falling above everything else", () => {
+	it("puts the end of the game above everything else", () => {
 		expect(lineForMove([word, { type: "tower-fell" }], plain).mood).toBe("sad");
+		expect(lineForMove([{ type: "buried" }], plain).text).toContain("buried");
 	});
 
 	it("warns when a curse is close to the bottom", () => {
-		const rows = Array(8).fill("e e e e e e e");
+		const rows = Array(8).fill(FULL);
 		rows[6] = "e e !e e e e e";
-		const line = lineForMove([word], boardFromRows(rows));
+		const line = lineForMove([word], classicWith(boardFromRows(rows)));
 		expect(line.mood).toBe("worried");
 		expect(line.text).toContain("one row");
 	});
@@ -52,7 +57,25 @@ describe("lineForMove", () => {
 
 	it("reports an ordinary word", () => {
 		expect(lineForMove([word], plain).text).toBe("“cat” for 50.");
-		expect(lineForMove([], plain)).toBe(OPENING_LINE);
+		expect(lineForMove([], plain)).toEqual(openingLine("classic"));
+	});
+});
+
+describe("Action warnings", () => {
+	it("counts empty cells and warns when space runs low", () => {
+		const roomy = actionWith(
+			boardFromRows([EMPTY, EMPTY, EMPTY, FULL, FULL, FULL, FULL, FULL]),
+		);
+		expect(emptyCells(roomy.board)).toBe(21);
+		expect(dangerLine(roomy)).toBeNull();
+
+		const rows = Array(8).fill(FULL);
+		rows[0] = "e e . . . e e";
+		const tight = actionWith(boardFromRows(rows));
+		expect(dangerLine(tight)?.text).toContain("Only 3 spaces left");
+
+		const full = actionWith(boardFromRows(Array(8).fill(FULL)));
+		expect(dangerLine(full)?.text).toContain("board is full");
 	});
 });
 

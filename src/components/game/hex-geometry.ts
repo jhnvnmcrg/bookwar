@@ -11,6 +11,8 @@ export const BOARD_PADDING = 22;
 export const BOARD_WIDTH =
 	2 * BOARD_PADDING + HEX_SIZE * (1.5 * (COLS - 1) + 2);
 export const BOARD_HEIGHT = 2 * BOARD_PADDING + HEX_HEIGHT * (ROWS + 0.5);
+/** Width over height, for sizing the board's container from the space available. */
+export const BOARD_ASPECT = BOARD_WIDTH / BOARD_HEIGHT;
 
 export interface Point {
 	readonly x: number;

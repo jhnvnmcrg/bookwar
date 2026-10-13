@@ -184,6 +184,22 @@ body {
     opacity: 0;
   }
 }
+/* Action mode: the bar empties until the next stone falls. Kept even with reduced motion,
+   because it is information rather than decoration. */
+.drop-timer {
+  animation-name: drop-timer;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+  transform-origin: left;
+}
+@keyframes drop-timer {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
 .owl-blink {
   transform-box: fill-box;
   transform-origin: center;

@@ -47,7 +47,7 @@ export type Board = readonly Cell[];
 
 export type RngState = readonly [number, number, number, number];
 
-export type GameMode = "classic";
+export type GameMode = "classic" | "action";
 
 export type GameStatus = "playing" | "over";
 
@@ -80,10 +80,13 @@ export interface GameState {
 
 export type GameAction =
 	| { readonly type: "play"; readonly path: readonly number[] }
-	| { readonly type: "shuffle" };
+	| { readonly type: "shuffle" }
+	/** Action mode: the clock drops one more stone. */
+	| { readonly type: "tick" };
 
 export type PlayError =
 	| "game-over"
+	| "wrong-mode"
 	| "bad-path"
 	| "reused-stone"
 	| "not-adjacent"
@@ -118,7 +121,10 @@ export type GameEvent =
 	| { readonly type: "curse-appeared"; readonly id: number }
 	| { readonly type: "curses-sank"; readonly ids: readonly number[] }
 	| { readonly type: "shuffled" }
-	| { readonly type: "tower-fell" };
+	| { readonly type: "tower-fell" }
+	| { readonly type: "stones-dropped"; readonly ids: readonly number[] }
+	/** Action mode: a stone had nowhere to land. */
+	| { readonly type: "buried" };
 
 export type ReduceResult =
 	| {

@@ -11,10 +11,9 @@ import {
 } from "../board";
 import { MAX_CURSES_FROM_WORDS } from "../config";
 import { rowOf } from "../hex";
-import { levelForScore, pickProphecy, prophecyBonus, rankFor } from "../levels";
+import { pickProphecy } from "../levels";
 import { checkPath } from "../path";
 import { Rng } from "../rng";
-import { scoreWord } from "../scoring";
 import { crystalTierFor, curseChance, higherTier } from "../specials";
 import type {
 	Board,
@@ -25,6 +24,7 @@ import type {
 	ReduceResult,
 	WordList,
 } from "../types";
+import { scoreMove } from "./shared";
 
 export function createClassicGame(seed: string): GameState {
 	const rng = Rng.fromSeed(seed);
@@ -58,6 +58,8 @@ export function reduceClassic(
 			return playWord(state, action.path, words);
 		case "shuffle":
 			return shuffle(state);
+		case "tick":
+			return { ok: false, error: "wrong-mode" };
 	}
 }
 
@@ -75,44 +77,9 @@ function playWord(
 	if (!check.ok) return check;
 
 	const rng = new Rng(state.rng);
-	const events: GameEvent[] = [];
 	const { word, stones } = check;
 	const letters = word.length;
-
-	const wordScore = scoreWord(stones);
-	let score = state.score + wordScore.total;
-	events.push({
-		type: "word",
-		word,
-		path: [...path],
-		score: wordScore.total,
-		crystalMultiplier: wordScore.crystalMultiplier,
-		cursesBroken: stones.filter((stone) => stone.kind === "curse").length,
-	});
-
-	let prophecy = state.prophecy;
-	if (!prophecy.fulfilled && word === prophecy.word) {
-		const bonus = prophecyBonus(state.level);
-		score += bonus;
-		prophecy = { word: prophecy.word, fulfilled: true };
-		events.push({ type: "prophecy-fulfilled", word, bonus });
-	}
-
-	let level = state.level;
-	let pastProphecies = state.pastProphecies;
-	const reached = levelForScore(score);
-	if (reached > level) {
-		level = reached;
-		const next = pickProphecy(rng, pastProphecies);
-		prophecy = { word: next, fulfilled: false };
-		pastProphecies = [...pastProphecies, next];
-		events.push({
-			type: "level-up",
-			level,
-			rank: rankFor(level),
-			prophecy: next,
-		});
-	}
+	const { fields, events } = scoreMove(state, word, path, stones, rng);
 
 	const refill = collapseAndRefill(
 		removeStones(state.board, path),
@@ -124,7 +91,7 @@ function playWord(
 	if (
 		refill.added.length > 0 &&
 		countCurses(board) < MAX_CURSES_FROM_WORDS &&
-		rng.chance(curseChance(level, letters))
+		rng.chance(curseChance(fields.level, letters))
 	) {
 		const index = rng.pick(refill.added);
 		board = withCurse(board, index);
@@ -154,23 +121,14 @@ function playWord(
 	const towerFell = hasCurseOnBottomRow(board);
 	if (towerFell) events.push({ type: "tower-fell" });
 
-	const best = state.bestWord;
 	return {
 		ok: true,
 		state: {
 			...state,
+			...fields,
 			rng: rng.state,
 			nextId: refill.nextId,
 			board,
-			score,
-			level,
-			wordsPlayed: state.wordsPlayed + 1,
-			prophecy,
-			pastProphecies,
-			bestWord:
-				!best || wordScore.total > best.score
-					? { word, score: wordScore.total }
-					: best,
 			status: towerFell ? "over" : "playing",
 		},
 		events,

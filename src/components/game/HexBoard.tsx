@@ -22,6 +22,8 @@ export interface HexBoardProps {
 	/** Bumped after a shuffle so the stones visibly re-roll. */
 	readonly shuffleKey: number;
 	readonly locked: boolean;
+	/** Which edge of the board is the losing line. */
+	readonly dangerEdge: "bottom" | "top";
 	readonly onPress: (index: number) => void;
 	readonly onDrag: (index: number) => void;
 	readonly onRelease: () => void;
@@ -46,6 +48,7 @@ export function HexBoard({
 	rejectKey,
 	shuffleKey,
 	locked,
+	dangerEdge,
 	onPress,
 	onDrag,
 	onRelease,
@@ -240,7 +243,7 @@ export function HexBoard({
 		<svg
 			ref={svgRef}
 			viewBox={`0 0 ${BOARD_WIDTH} ${BOARD_HEIGHT}`}
-			className="block h-auto max-h-[calc(100dvh-17rem)] w-full touch-none select-none lg:max-h-[calc(100dvh-16rem)]"
+			className="block h-auto w-full touch-none select-none"
 			role="group"
 			aria-label="Rune board. Tap or drag across touching stones, or type a word."
 			onPointerDown={handlePointerDown}
@@ -254,7 +257,13 @@ export function HexBoard({
 					<stop offset="0%" style={{ stopColor: "var(--lapis-raised)" }} />
 					<stop offset="100%" style={{ stopColor: "var(--lapis-deep)" }} />
 				</linearGradient>
-				<linearGradient id={`${prefix}-danger`} x1="0" y1="0" x2="0" y2="1">
+				<linearGradient
+					id={`${prefix}-danger`}
+					x1="0"
+					y1={dangerEdge === "bottom" ? 0 : 1}
+					x2="0"
+					y2={dangerEdge === "bottom" ? 1 : 0}
+				>
 					<stop
 						offset="0%"
 						style={{ stopColor: "var(--rubric)", stopOpacity: 0 }}
@@ -284,10 +293,15 @@ export function HexBoard({
 				rx={14}
 				fill={`url(#${prefix}-page)`}
 			/>
-			{/* The bottom row glows red: a curse that sinks there topples the tower. */}
+			{/* The danger edge glows red: in Classic a curse that sinks to the bottom topples the
+			    tower; in Action, stones piling up to the top bury it. */}
 			<rect
 				x={FRAME_INSET}
-				y={BOARD_HEIGHT - FRAME_INSET - HEX_HEIGHT * 1.6}
+				y={
+					dangerEdge === "bottom"
+						? BOARD_HEIGHT - FRAME_INSET - HEX_HEIGHT * 1.6
+						: FRAME_INSET
+				}
 				width={BOARD_WIDTH - 2 * FRAME_INSET}
 				height={HEX_HEIGHT * 1.6}
 				fill={`url(#${prefix}-danger)`}

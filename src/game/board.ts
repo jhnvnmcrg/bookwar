@@ -2,7 +2,7 @@ import { drawLetter } from "./bag";
 import { CELL_COUNT, COLS, ROWS } from "./config";
 import { toIndex } from "./hex";
 import type { Rng } from "./rng";
-import type { Board, Cell, CrystalTier, Stone } from "./types";
+import type { Board, Cell, CrystalTier, Letter, Stone } from "./types";
 
 export function createBoard(
 	rng: Rng,
@@ -20,21 +20,34 @@ export function createBoard(
 	return { board, nextId };
 }
 
+/** Action mode's starting board: only the bottom `rows` of every column are filled. */
+export function createPartialBoard(
+	rng: Rng,
+	firstId: number,
+	rows: number,
+): { board: Board; nextId: number } {
+	const board: Cell[] = Array.from({ length: CELL_COUNT }, () => null);
+	let nextId = firstId;
+	for (let col = 0; col < COLS; col++) {
+		for (let row = ROWS - 1; row >= ROWS - rows; row--) {
+			board[toIndex(col, row)] = {
+				id: nextId++,
+				letter: drawLetter(rng, board),
+				kind: "rune",
+			};
+		}
+	}
+	return { board, nextId };
+}
+
 export function removeStones(board: Board, indexes: readonly number[]): Board {
 	const next = board.slice();
 	for (const index of indexes) next[index] = null;
 	return next;
 }
 
-/**
- * Stones fall straight down their column, then empty cells (all at the top) get fresh runes.
- * Returns the indexes that received new stones.
- */
-export function collapseAndRefill(
-	board: Board,
-	rng: Rng,
-	firstId: number,
-): { board: Board; nextId: number; added: number[] } {
+/** Stones fall straight down their column, leaving any empty cells at the top. */
+export function collapse(board: Board): Board {
 	const next: Cell[] = board.slice();
 	for (let col = 0; col < COLS; col++) {
 		const stones: Stone[] = [];
@@ -46,7 +59,55 @@ export function collapseAndRefill(
 			next[toIndex(col, ROWS - 1 - i)] = i < stones.length ? stones[i] : null;
 		}
 	}
+	return next;
+}
 
+/** The lowest empty cell in a column (where a dropped stone lands), or null if it's full. */
+export function landingCell(board: Board, col: number): number | null {
+	for (let row = ROWS - 1; row >= 0; row--) {
+		const index = toIndex(col, row);
+		if (!board[index]) return index;
+	}
+	return null;
+}
+
+/**
+ * Drops one stone onto a column (a random one with room unless `col` is given). Returns null
+ * when it has nowhere to land.
+ */
+export function dropStone(
+	board: Board,
+	rng: Rng,
+	stone: (letter: Letter) => Stone,
+	col?: number,
+): { board: Board; index: number } | null {
+	const columns =
+		col === undefined
+			? Array.from({ length: COLS }, (_, c) => c).filter(
+					(c) => landingCell(board, c) !== null,
+				)
+			: [col];
+	if (columns.length === 0) return null;
+	const index = landingCell(
+		board,
+		columns.length === 1 ? columns[0] : rng.pick(columns),
+	);
+	if (index === null) return null;
+	const next = board.slice();
+	next[index] = stone(drawLetter(rng, board));
+	return { board: next, index };
+}
+
+/**
+ * Stones fall straight down their column, then empty cells (all at the top) get fresh runes.
+ * Returns the indexes that received new stones.
+ */
+export function collapseAndRefill(
+	board: Board,
+	rng: Rng,
+	firstId: number,
+): { board: Board; nextId: number; added: number[] } {
+	const next: Cell[] = collapse(board).slice();
 	const added: number[] = [];
 	let nextId = firstId;
 	for (let index = 0; index < CELL_COUNT; index++) {

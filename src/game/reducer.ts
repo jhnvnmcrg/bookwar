@@ -1,3 +1,4 @@
+import { createActionGame, reduceAction } from "./modes/action";
 import { createClassicGame, reduceClassic } from "./modes/classic";
 import type {
 	GameAction,
@@ -16,6 +17,8 @@ export function createGame(options: NewGameOptions): GameState {
 	switch (options.mode) {
 		case "classic":
 			return createClassicGame(options.seed);
+		case "action":
+			return createActionGame(options.seed);
 	}
 }
 
@@ -31,5 +34,7 @@ export function reduce(
 	switch (state.mode) {
 		case "classic":
 			return reduceClassic(state, action, words);
+		case "action":
+			return reduceAction(state, action, words);
 	}
 }

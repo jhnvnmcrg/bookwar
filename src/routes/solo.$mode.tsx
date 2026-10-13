@@ -1,27 +1,40 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import { type ReactNode, useState } from "react";
+import {
+	type CSSProperties,
+	type ReactNode,
+	useEffect,
+	useEffectEvent,
+	useState,
+} from "react";
+import { z } from "zod";
 import { Nox } from "#/components/brand/Nox";
 import { CurseMeter } from "#/components/game/CurseMeter";
 import { GameOver } from "#/components/game/GameOver";
 import { HexBoard } from "#/components/game/HexBoard";
+import { BOARD_ASPECT } from "#/components/game/hex-geometry";
 import { LevelBanner } from "#/components/game/LevelBanner";
+import { isSoloMode, SOLO_MODES } from "#/components/game/modes";
 import { NoxSays } from "#/components/game/NoxSays";
 import { ProphecyScroll } from "#/components/game/ProphecyScroll";
 import { ScorePanel } from "#/components/game/ScorePanel";
+import { DropTimer, SpaceMeter } from "#/components/game/SpaceMeter";
 import { WordTray } from "#/components/game/WordTray";
 import { Button } from "#/components/ui/button";
+import { createGame, type GameMode, type GameState } from "#/game";
 import type { Dictionary } from "#/game/dictionary";
 import { useDictionary } from "#/hooks/useDictionary";
 import { useSoloGame } from "#/hooks/useSoloGame";
+import { loadSave } from "#/lib/guest-storage";
 
-const MODES = ["classic"] as const;
-type SoloMode = (typeof MODES)[number];
-
-const isSoloMode = (value: string): value is SoloMode =>
-	(MODES as readonly string[]).includes(value);
+const searchSchema = z.object({
+	/** Start a new game instead of continuing the saved one. */
+	fresh: z.boolean().optional().catch(undefined),
+	/** Development only: play a specific board. */
+	seed: z.string().optional().catch(undefined),
+});
 
 export const Route = createFileRoute("/solo/$mode")({
-	// The game lives entirely in the browser (word list, animations, keyboard).
+	// The game lives entirely in the browser (word list, saves, animations, keyboard).
 	ssr: false,
 	params: {
 		parse: ({ mode }) => {
@@ -30,21 +43,51 @@ export const Route = createFileRoute("/solo/$mode")({
 		},
 		stringify: ({ mode }) => ({ mode }),
 	},
-	// ?seed= replays a specific board, in development only.
-	validateSearch: (search: Record<string, unknown>): { seed?: string } =>
-		typeof search.seed === "string" ? { seed: search.seed } : {},
-	head: () => ({ meta: [{ title: "Classic | Bookwar" }] }),
+	validateSearch: searchSchema,
+	remountDeps: ({ params }) => params.mode,
+	head: ({ params }) => ({
+		meta: [{ title: `${SOLO_MODES[params.mode].name} | Bookwar` }],
+	}),
 	component: SoloPage,
 });
 
 const newSeed = () => crypto.randomUUID().slice(0, 8);
 
+interface Start {
+	readonly state: GameState;
+	/** True when continuing a saved game. */
+	readonly resumed: boolean;
+}
+
+/** The saved game for this mode, unless a new one was asked for. */
+function startingGame(
+	mode: GameMode,
+	search: z.infer<typeof searchSchema>,
+): Start {
+	if (import.meta.env.DEV && search.seed) {
+		return { state: createGame({ mode, seed: search.seed }), resumed: false };
+	}
+	if (!search.fresh) {
+		const saved = loadSave(mode);
+		if (saved) return { state: saved, resumed: true };
+	}
+	return { state: createGame({ mode, seed: newSeed() }), resumed: false };
+}
+
 function SoloPage() {
+	const { mode } = Route.useParams();
 	const search = Route.useSearch();
+	const navigate = Route.useNavigate();
 	const words = useDictionary();
-	const [seed, setSeed] = useState(() =>
-		import.meta.env.DEV && search.seed ? search.seed : newSeed(),
-	);
+	const [start, setStart] = useState(() => startingGame(mode, search));
+
+	// ?fresh and ?seed only pick the starting game; drop them so a refresh continues it.
+	const tidyUrl = useEffectEvent(() => {
+		if (search.fresh !== undefined || search.seed !== undefined) {
+			void navigate({ search: {}, replace: true });
+		}
+	});
+	useEffect(() => tidyUrl(), []);
 
 	if (words.status === "loading") {
 		return (
@@ -69,10 +112,16 @@ function SoloPage() {
 	}
 	return (
 		<SoloGame
-			key={seed}
-			seed={seed}
+			key={start.state.seed}
+			initial={start.state}
+			resumed={start.resumed}
 			dictionary={words.dictionary}
-			onNewGame={() => setSeed(newSeed())}
+			onNewGame={() =>
+				setStart({
+					state: createGame({ mode, seed: newSeed() }),
+					resumed: false,
+				})
+			}
 		/>
 	);
 }
@@ -86,27 +135,50 @@ function CenteredMessage({ children }: { children: ReactNode }) {
 }
 
 function SoloGame({
-	seed,
+	initial,
+	resumed,
 	dictionary,
 	onNewGame,
 }: {
-	seed: string;
+	initial: GameState;
+	resumed: boolean;
 	dictionary: Dictionary;
 	onNewGame: () => void;
 }) {
-	const solo = useSoloGame(seed, dictionary);
+	const solo = useSoloGame(initial, dictionary, { startPaused: resumed });
 	const { game } = solo;
+	const action = game.mode === "action";
+	const over = game.status === "over";
 
 	return (
 		<main className="mx-auto grid max-w-6xl gap-x-10 gap-y-4 px-4 pt-3 pb-8 lg:grid-cols-[15rem_minmax(0,34rem)_15rem] lg:grid-rows-[auto_auto_1fr] lg:justify-center lg:pt-6">
-			<header className="flex items-center justify-between lg:col-span-3">
+			<header className="flex items-center justify-between gap-4 lg:col-span-3">
 				<Link
 					to="/"
 					className="font-display text-xl text-gold-bright hover:text-gold"
 				>
 					Bookwar
 				</Link>
-				<p className="text-sm text-vellum-dim">Classic</p>
+				<div className="flex items-center gap-4">
+					<p className="text-sm text-vellum-dim">
+						{SOLO_MODES[game.mode].name}
+					</p>
+					{action &&
+						(solo.paused ? (
+							<Button size="sm" onClick={solo.resume}>
+								Resume
+							</Button>
+						) : (
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={solo.pause}
+								disabled={over}
+							>
+								Pause
+							</Button>
+						))}
+				</div>
 			</header>
 
 			<aside className="lg:col-start-1 lg:row-span-2 lg:row-start-2 lg:pt-2">
@@ -121,21 +193,46 @@ function SoloGame({
 				aria-label="Board"
 				className="lg:col-start-2 lg:row-span-2 lg:row-start-2"
 			>
-				<div className="relative">
-					<HexBoard
-						board={game.board}
-						selection={solo.selection}
-						casting={solo.casting}
-						rejectKey={solo.rejectKey}
-						shuffleKey={solo.shuffleKey}
-						locked={solo.locked}
-						onPress={solo.press}
-						onDrag={solo.drag}
-						onRelease={solo.release}
-						onCancel={solo.cancelGesture}
-						onCastAnimated={solo.finishCast}
-					/>
-					<LevelBanner banner={solo.banner} />
+				{/* Sized from the board's shape so it fits the screen height with the tray below. */}
+				<div
+					className="mx-auto max-w-[calc((100dvh-17rem)*var(--board-aspect))] lg:max-w-[calc((100dvh-16rem)*var(--board-aspect))]"
+					style={{ "--board-aspect": BOARD_ASPECT } as CSSProperties}
+				>
+					{action && (
+						<DropTimer clock={solo.dropClock} running={!solo.paused && !over} />
+					)}
+					<div className="relative">
+						<HexBoard
+							board={game.board}
+							selection={solo.selection}
+							casting={solo.casting}
+							rejectKey={solo.rejectKey}
+							shuffleKey={solo.shuffleKey}
+							locked={solo.locked}
+							dangerEdge={action ? "top" : "bottom"}
+							onPress={solo.press}
+							onDrag={solo.drag}
+							onRelease={solo.release}
+							onCancel={solo.cancelGesture}
+							onCastAnimated={solo.finishCast}
+						/>
+						<LevelBanner banner={solo.banner} />
+						{solo.paused && (
+							<div className="absolute inset-0 grid place-items-center rounded-[18px] bg-lapis-deep/95 text-center">
+								<div>
+									<p className="font-stone text-3xl font-bold text-vellum">
+										Paused
+									</p>
+									<p className="mt-1 text-sm text-vellum-dim">
+										Stones won't fall while the game is paused.
+									</p>
+									<Button className="mt-4" onClick={solo.resume}>
+										Resume
+									</Button>
+								</div>
+							</div>
+						)}
+					</div>
 				</div>
 				<div className="mt-4">
 					<WordTray
@@ -150,12 +247,16 @@ function SoloGame({
 					/>
 				</div>
 				{import.meta.env.DEV && (
-					<p className="mt-3 text-xs text-vellum-dim/60">Seed {seed}</p>
+					<p className="mt-3 text-xs text-vellum-dim/60">Seed {game.seed}</p>
 				)}
 			</section>
 
 			<aside className="flex flex-col gap-5 border-t border-gold/20 pt-4 lg:col-start-3 lg:row-start-3 lg:border-0 lg:pt-0">
-				<CurseMeter board={game.board} />
+				{action ? (
+					<SpaceMeter board={game.board} />
+				) : (
+					<CurseMeter board={game.board} />
+				)}
 				<div className="flex items-center gap-3 lg:block">
 					<Button
 						variant="outline"
@@ -165,7 +266,7 @@ function SoloGame({
 						Shuffle
 					</Button>
 					<p className="text-sm text-vellum-dim lg:mt-2">
-						New letters for every plain stone. Adds a curse rune.
+						{SOLO_MODES[game.mode].shuffle}
 					</p>
 				</div>
 				<NoxSays line={solo.nox} />
@@ -175,8 +276,8 @@ function SoloGame({
 				</p>
 			</aside>
 
-			{game.status === "over" && (
-				<GameOver game={game} onPlayAgain={onNewGame} />
+			{over && (
+				<GameOver game={game} place={solo.place} onPlayAgain={onNewGame} />
 			)}
 		</main>
 	);

@@ -1,9 +1,10 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
+	dangerLine,
 	lineForMove,
 	lineForRejection,
 	type NoxLine,
-	OPENING_LINE,
+	openingLine,
 } from "#/components/game/nox-lines";
 import {
 	dragOnto,
@@ -12,7 +13,7 @@ import {
 	typedLetters,
 } from "#/components/game/selection";
 import {
-	createGame,
+	dropInterval,
 	findPath,
 	type GameEvent,
 	type GameState,
@@ -24,6 +25,12 @@ import {
 	scoreWord,
 } from "#/game";
 import type { Dictionary } from "#/game/dictionary";
+import {
+	clearSave,
+	recordScore,
+	saveGame,
+	scoreEntryFor,
+} from "#/lib/guest-storage";
 
 export type WordStatus = "empty" | "short" | "valid" | "invalid";
 
@@ -39,6 +46,12 @@ export interface Banner {
 	readonly detail: string;
 }
 
+/** Drives the "next stone" bar in Action mode: restart on `key`, run for `durationMs`. */
+export interface DropClock {
+	readonly key: number;
+	readonly durationMs: number;
+}
+
 interface Gesture {
 	readonly pressed: number;
 	readonly deferred: boolean;
@@ -51,29 +64,49 @@ const BANNER_MS = 2700;
 const formatPoints = (value: number) => value.toLocaleString("en-US");
 
 /**
- * Runs one Solo Classic game in the browser: the engine state, the stones being selected
- * (by tap, drag or typing), and the feedback shown after each move.
+ * Runs one Solo game in the browser: the engine state, the stones being selected (by tap,
+ * drag or typing), Action mode's falling-stone clock, saving after every move, and the
+ * feedback shown after each move.
  */
-export function useSoloGame(seed: string, dictionary: Dictionary) {
-	const [game, setGame] = useState<GameState>(() =>
-		createGame({ mode: "classic", seed }),
-	);
+export function useSoloGame(
+	initial: GameState,
+	dictionary: Dictionary,
+	/** Continued Action games open paused, so stones don't fall before the player is ready. */
+	{ startPaused = false }: { startPaused?: boolean } = {},
+) {
+	const [game, setGameState] = useState(initial);
+	/** Handlers read the game from here so a move never applies to a stale state. */
+	const gameRef = useRef(initial);
 	const [selection, setSelectionState] = useState<readonly number[]>([]);
 	const selectionRef = useRef<readonly number[]>([]);
 	const [casting, setCasting] = useState<readonly number[] | null>(null);
-	const pendingCast = useRef<GameState | null>(null);
-	const pendingEvents = useRef<readonly GameEvent[]>([]);
+	const pendingCast = useRef<{
+		state: GameState;
+		events: readonly GameEvent[];
+	} | null>(null);
 	const [rejectKey, setRejectKey] = useState(0);
 	const [shuffleKey, setShuffleKey] = useState(0);
-	const [nox, setNox] = useState<NoxLine>(OPENING_LINE);
+	const [nox, setNox] = useState<NoxLine>(() => openingLine(initial.mode));
 	const [popups, setPopups] = useState<readonly Popup[]>([]);
 	const [banner, setBanner] = useState<Banner | null>(null);
+	/** Place on the local high-score list once the game ends (null: didn't make the list). */
+	const [place, setPlace] = useState<number | null>(null);
+	const [paused, setPaused] = useState(
+		startPaused && initial.mode === "action" && initial.status === "playing",
+	);
+	const [dropClock, setDropClock] = useState<DropClock>(() => ({
+		key: 0,
+		durationMs: dropInterval(initial.level),
+	}));
+	const nextDropAt = useRef<number | null>(null);
+	const pausedRemaining = useRef<number | null>(null);
 	const gesture = useRef<Gesture | null>(null);
 	const lastKey = useRef("");
 	const nextFeedbackId = useRef(1);
 
+	const action = game.mode === "action";
 	const over = game.status === "over";
-	const locked = casting !== null || over;
+	const locked = casting !== null || over || paused;
 
 	const stones = selection
 		.map((index) => game.board[index])
@@ -95,7 +128,21 @@ export function useSoloGame(seed: string, dictionary: Dictionary) {
 	}
 
 	function wordOf(path: readonly number[]): string {
-		return path.map((index) => game.board[index]?.letter ?? "").join("");
+		return path
+			.map((index) => gameRef.current.board[index]?.letter ?? "")
+			.join("");
+	}
+
+	/** Applies a new state: saves it, or records the score when the game just ended. */
+	function commit(next: GameState) {
+		gameRef.current = next;
+		setGameState(next);
+		if (next.status === "playing") {
+			saveGame(next);
+		} else {
+			clearSave(next.mode);
+			setPlace(recordScore(next.mode, scoreEntryFor(next, new Date())));
+		}
 	}
 
 	function reject(error: PlayError, attempted: string, clear: boolean) {
@@ -105,7 +152,7 @@ export function useSoloGame(seed: string, dictionary: Dictionary) {
 	}
 
 	function announce(events: readonly GameEvent[], next: GameState) {
-		setNox(lineForMove(events, next.board));
+		setNox(lineForMove(events, next));
 		const added: Popup[] = [];
 		for (const event of events) {
 			if (event.type === "word") {
@@ -143,36 +190,114 @@ export function useSoloGame(seed: string, dictionary: Dictionary) {
 	function cast(clearOnFail = false) {
 		const path = selectionRef.current;
 		if (locked || path.length === 0) return;
-		const result = reduce(game, { type: "play", path }, dictionary);
+		const result = reduce(gameRef.current, { type: "play", path }, dictionary);
 		if (!result.ok) {
 			reject(result.error, wordOf(path), clearOnFail);
 			return;
 		}
-		pendingCast.current = result.state;
-		pendingEvents.current = result.events;
+		pendingCast.current = { state: result.state, events: result.events };
 		setCasting(path);
 	}
 
 	/** Called by the board once the cast animation has played. */
 	function finishCast() {
-		const next = pendingCast.current;
+		const pending = pendingCast.current;
 		pendingCast.current = null;
 		setCasting(null);
-		if (!next) return;
-		setGame(next);
+		if (!pending) return;
+		commit(pending.state);
 		setSelection([]);
-		announce(pendingEvents.current, next);
+		announce(pending.events, pending.state);
 	}
 
 	function shuffle() {
 		if (locked) return;
-		const result = reduce(game, { type: "shuffle" }, dictionary);
+		const result = reduce(gameRef.current, { type: "shuffle" }, dictionary);
 		if (!result.ok) return;
-		setGame(result.state);
+		commit(result.state);
 		setSelection([]);
 		setShuffleKey((key) => key + 1);
 		announce(result.events, result.state);
 	}
+
+	// --- Action mode clock -------------------------------------------------------------
+
+	/** One clock tick: drop a stone. Returns false once the game is over. */
+	const dropNow = useEffectEvent((): boolean => {
+		const result = reduce(gameRef.current, { type: "tick" }, dictionary);
+		if (!result.ok) return false;
+		const next = result.state;
+		commit(next);
+		const duration = dropInterval(next.level);
+		nextDropAt.current = Date.now() + duration;
+		setDropClock((clock) => ({ key: clock.key + 1, durationMs: duration }));
+		// Ticks only speak up when something is wrong; otherwise Nox keeps the last line.
+		const warning =
+			next.status === "over"
+				? lineForMove(result.events, next)
+				: dangerLine(next);
+		if (warning)
+			setNox((line) => (line.text === warning.text ? line : warning));
+		return next.status === "playing";
+	});
+
+	const firstDelay = useEffectEvent(() => dropInterval(gameRef.current.level));
+
+	const ticking = action && !over && !paused;
+	const castPending = casting !== null;
+	useEffect(() => {
+		// A drop that comes due mid-cast waits for the cast to land, then falls straight away.
+		if (!ticking || castPending) return;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const schedule = () => {
+			nextDropAt.current ??= Date.now() + firstDelay();
+			timer = setTimeout(
+				() => {
+					if (dropNow()) schedule();
+				},
+				Math.max(0, nextDropAt.current - Date.now()),
+			);
+		};
+		schedule();
+		return () => clearTimeout(timer);
+	}, [ticking, castPending]);
+
+	function pause() {
+		if (!action || over || paused) return;
+		pausedRemaining.current =
+			nextDropAt.current === null
+				? null
+				: Math.max(0, nextDropAt.current - Date.now());
+		setPaused(true);
+		gesture.current = null;
+	}
+
+	function resume() {
+		if (!paused) return;
+		if (pausedRemaining.current !== null) {
+			nextDropAt.current = Date.now() + pausedRemaining.current;
+		}
+		pausedRemaining.current = null;
+		setPaused(false);
+	}
+
+	// Leaving the tab pauses Action mode so stones don't pile up unseen.
+	const onVisibilityChange = useEffectEvent(() => {
+		if (document.hidden) pause();
+	});
+	useEffect(() => {
+		const handler = () => onVisibilityChange();
+		document.addEventListener("visibilitychange", handler);
+		return () => document.removeEventListener("visibilitychange", handler);
+	}, []);
+
+	// Save the starting state too, so leaving before the first move still offers Continue.
+	const saveInitial = useEffectEvent(() => {
+		if (gameRef.current.status === "playing") saveGame(gameRef.current);
+	});
+	useEffect(() => saveInitial(), []);
+
+	// --- Input --------------------------------------------------------------------------
 
 	function press(index: number) {
 		if (locked) return;
@@ -216,8 +341,9 @@ export function useSoloGame(seed: string, dictionary: Dictionary) {
 	}
 
 	function typeKey(key: string) {
+		const board = gameRef.current.board;
 		const path = selectionRef.current;
-		const lastStone = game.board[path.at(-1) ?? -1];
+		const lastStone = board[path.at(-1) ?? -1];
 		if (key === "u" && lastKey.current === "q" && lastStone?.letter === "qu") {
 			lastKey.current = "u";
 			return;
@@ -225,12 +351,12 @@ export function useSoloGame(seed: string, dictionary: Dictionary) {
 		lastKey.current = key;
 		const letters: Letter[] = [
 			...path.flatMap((index) => {
-				const stone = game.board[index];
+				const stone = board[index];
 				return stone ? [stone.letter] : [];
 			}),
 			...typedLetters(key),
 		];
-		const found = findPath(game.board, letters, path);
+		const found = findPath(board, letters, path);
 		if (found) {
 			setSelection(found);
 		} else {
@@ -282,6 +408,9 @@ export function useSoloGame(seed: string, dictionary: Dictionary) {
 		preview,
 		casting,
 		locked,
+		paused,
+		dropClock,
+		place,
 		rejectKey,
 		shuffleKey,
 		nox,
@@ -294,6 +423,8 @@ export function useSoloGame(seed: string, dictionary: Dictionary) {
 		cast: () => cast(),
 		clear: () => setSelection([]),
 		shuffle,
+		pause,
+		resume,
 		finishCast,
 	};
 }

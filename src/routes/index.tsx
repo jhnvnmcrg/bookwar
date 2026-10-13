@@ -1,15 +1,15 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { Nox } from "#/components/brand/Nox";
 import { TitleStones } from "#/components/brand/TitleStones";
+import { SOLO_MODE_LIST, SOLO_MODES } from "#/components/game/modes";
 import { Button } from "#/components/ui/button";
+import type { GameMode, GameState } from "#/game";
+import { loadSave, loadScores } from "#/lib/guest-storage";
 
 export const Route = createFileRoute("/")({ component: Title });
 
 const LATER_MODES = [
-	{
-		name: "Action",
-		text: "Stones keep falling from above. Clear them before the board fills.",
-	},
 	{
 		name: "Siege",
 		text: "Up to five wizards on their own boards. Lowest score each round is out.",
@@ -17,7 +17,34 @@ const LATER_MODES = [
 	{ name: "Duel", text: "You against one rival, three minutes on the clock." },
 ];
 
+interface ModeProgress {
+	readonly save: GameState | null;
+	readonly best: number | null;
+}
+
+const format = (value: number) => value.toLocaleString("en-US");
+
+/** Saved games and best scores live in this browser, so they're read after hydration. */
+function useProgress(): Partial<Record<GameMode, ModeProgress>> {
+	const [progress, setProgress] = useState<
+		Partial<Record<GameMode, ModeProgress>>
+	>({});
+	useEffect(() => {
+		setProgress(
+			Object.fromEntries(
+				SOLO_MODE_LIST.map((mode) => [
+					mode,
+					{ save: loadSave(mode), best: loadScores(mode)[0]?.score ?? null },
+				]),
+			),
+		);
+	}, []);
+	return progress;
+}
+
 function Title() {
+	const progress = useProgress();
+
 	return (
 		<main className="mx-auto flex min-h-dvh max-w-2xl flex-col px-4 pt-10 pb-12 sm:pt-16">
 			<h1 className="sr-only">Bookwar</h1>
@@ -27,31 +54,71 @@ function Title() {
 				bottom and topple your tower.
 			</p>
 
-			<section
-				aria-labelledby="classic-heading"
-				className="mt-10 flex items-center gap-5"
-			>
-				<Nox mood="happy" className="h-28 w-24 shrink-0" />
-				<div>
-					<h2
-						id="classic-heading"
-						className="font-stone text-3xl font-bold text-gold-bright"
-					>
-						Classic
-					</h2>
-					<p className="mt-1 text-vellum-dim">
-						No clock. Long words forge crystals that multiply your score; short
-						words invite curses.
-					</p>
-					<Button size="lg" className="mt-4 px-6 font-bold" asChild>
-						<Link to="/solo/$mode" params={{ mode: "classic" }}>
-							Play Classic
-						</Link>
-					</Button>
-				</div>
+			<section aria-label="Solo games" className="mt-10 flex gap-5">
+				<Nox mood="happy" className="hidden h-28 w-24 shrink-0 sm:block" />
+				<ul className="flex-1">
+					{SOLO_MODE_LIST.map((mode) => {
+						const { save, best } = progress[mode] ?? { save: null, best: null };
+						return (
+							<li
+								key={mode}
+								className="border-b border-gold/20 pb-6 not-first:pt-6"
+							>
+								<h2 className="font-stone text-3xl font-bold text-gold-bright">
+									{SOLO_MODES[mode].name}
+								</h2>
+								<p className="mt-1 text-vellum-dim">
+									{SOLO_MODES[mode].summary}
+								</p>
+								<div className="mt-4 flex flex-wrap items-center gap-3">
+									{save ? (
+										<>
+											<Button size="lg" className="px-6 font-bold" asChild>
+												<Link to="/solo/$mode" params={{ mode }}>
+													Continue
+												</Link>
+											</Button>
+											<Button size="lg" variant="outline" asChild>
+												<Link
+													to="/solo/$mode"
+													params={{ mode }}
+													search={{ fresh: true }}
+												>
+													New game
+												</Link>
+											</Button>
+										</>
+									) : (
+										<Button size="lg" className="px-6 font-bold" asChild>
+											<Link to="/solo/$mode" params={{ mode }}>
+												Play {SOLO_MODES[mode].name}
+											</Link>
+										</Button>
+									)}
+								</div>
+								{(save || best !== null) && (
+									<p className="mt-2 text-sm text-vellum-dim">
+										{save &&
+											`Saved game: level ${save.level}, ${format(save.score)} points. `}
+										{best !== null && `Your best: ${format(best)}.`}
+									</p>
+								)}
+							</li>
+						);
+					})}
+				</ul>
 			</section>
 
-			<section aria-labelledby="later-heading" className="mt-12">
+			<p className="mt-4 text-right">
+				<Link
+					to="/scores"
+					className="text-gold-bright underline-offset-4 hover:underline"
+				>
+					High scores
+				</Link>
+			</p>
+
+			<section aria-labelledby="later-heading" className="mt-10">
 				<h2 id="later-heading" className="text-vellum-dim">
 					Coming to Bookwar
 				</h2>
