@@ -143,6 +143,17 @@ export function hasCurseOnBottomRow(board: Board): boolean {
 	return false;
 }
 
+/** Rows between the lowest curse and the bottom of the board, or null when there are none. */
+export function nearestCurse(board: Board): number | null {
+	let nearest: number | null = null;
+	for (let index = 0; index < board.length; index++) {
+		if (board[index]?.kind !== "curse") continue;
+		const rows = ROWS - 1 - (index % ROWS);
+		if (nearest === null || rows < nearest) nearest = rows;
+	}
+	return nearest;
+}
+
 export function countCurses(board: Board): number {
 	return board.filter((cell) => cell?.kind === "curse").length;
 }

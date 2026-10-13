@@ -10,7 +10,9 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as PlayRouteImport } from './routes/play'
 import { Route as ScoresRouteImport } from './routes/scores'
+import { Route as RoomCodeRouteImport } from './routes/room.$code'
 import { Route as SoloModeRouteImport } from './routes/solo.$mode'
 
 const IndexRoute = IndexRouteImport.update({
@@ -18,9 +20,19 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PlayRoute = PlayRouteImport.update({
+  id: '/play',
+  path: '/play',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ScoresRoute = ScoresRouteImport.update({
   id: '/scores',
   path: '/scores',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RoomCodeRoute = RoomCodeRouteImport.update({
+  id: '/room/$code',
+  path: '/room/$code',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SoloModeRoute = SoloModeRouteImport.update({
@@ -31,31 +43,39 @@ const SoloModeRoute = SoloModeRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/play': typeof PlayRoute
   '/scores': typeof ScoresRoute
+  '/room/$code': typeof RoomCodeRoute
   '/solo/$mode': typeof SoloModeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/play': typeof PlayRoute
   '/scores': typeof ScoresRoute
+  '/room/$code': typeof RoomCodeRoute
   '/solo/$mode': typeof SoloModeRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/play': typeof PlayRoute
   '/scores': typeof ScoresRoute
+  '/room/$code': typeof RoomCodeRoute
   '/solo/$mode': typeof SoloModeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/scores' | '/solo/$mode'
+  fullPaths: '/' | '/play' | '/scores' | '/room/$code' | '/solo/$mode'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/scores' | '/solo/$mode'
-  id: '__root__' | '/' | '/scores' | '/solo/$mode'
+  to: '/' | '/play' | '/scores' | '/room/$code' | '/solo/$mode'
+  id: '__root__' | '/' | '/play' | '/scores' | '/room/$code' | '/solo/$mode'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  PlayRoute: typeof PlayRoute
   ScoresRoute: typeof ScoresRoute
+  RoomCodeRoute: typeof RoomCodeRoute
   SoloModeRoute: typeof SoloModeRoute
 }
 
@@ -68,11 +88,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/play': {
+      id: '/play'
+      path: '/play'
+      fullPath: '/play'
+      preLoaderRoute: typeof PlayRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/scores': {
       id: '/scores'
       path: '/scores'
       fullPath: '/scores'
       preLoaderRoute: typeof ScoresRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/room/$code': {
+      id: '/room/$code'
+      path: '/room/$code'
+      fullPath: '/room/$code'
+      preLoaderRoute: typeof RoomCodeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/solo/$mode': {
@@ -87,7 +121,9 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  PlayRoute: PlayRoute,
   ScoresRoute: ScoresRoute,
+  RoomCodeRoute: RoomCodeRoute,
   SoloModeRoute: SoloModeRoute,
 }
 export const routeTree = rootRouteImport

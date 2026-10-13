@@ -135,7 +135,12 @@ export function HexBoard({
 	// Cast: the chosen stones swell and burst in the order they were spelled.
 	useGSAP(
 		() => {
-			if (!casting) return;
+			if (!casting) {
+				// A cast the server turned down leaves burst stones on the board: bring them back.
+				const all = svgRef.current?.querySelectorAll(".stone-burst");
+				if (all?.length) gsap.set(all, { clearProps: "transform,opacity" });
+				return;
+			}
 			const elements = burstElements(casting);
 			if (prefersReducedMotion() || elements.length === 0) {
 				onCastAnimated();

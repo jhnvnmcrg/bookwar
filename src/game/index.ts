@@ -1,3 +1,4 @@
+export { nearestCurse } from "./board";
 export * from "./config";
 export { type Candidate, findPath, findWords } from "./finder";
 export { areAdjacent, colOf, NEIGHBORS, rowOf, toIndex } from "./hex";

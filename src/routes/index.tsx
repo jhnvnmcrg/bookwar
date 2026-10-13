@@ -14,7 +14,6 @@ const LATER_MODES = [
 		name: "Siege",
 		text: "Up to five wizards on their own boards. Lowest score each round is out.",
 	},
-	{ name: "Duel", text: "You against one rival, three minutes on the clock." },
 ];
 
 interface ModeProgress {
@@ -117,6 +116,22 @@ function Title() {
 					High scores
 				</Link>
 			</p>
+
+			<section aria-labelledby="duel-heading" className="mt-6 sm:pl-29">
+				<h2
+					id="duel-heading"
+					className="font-stone text-3xl font-bold text-gold-bright"
+				>
+					Duel
+				</h2>
+				<p className="mt-1 text-vellum-dim">
+					You against one rival, on the clock. Invite a friend with a room code,
+					or take on the AI.
+				</p>
+				<Button size="lg" className="mt-4 px-6 font-bold" asChild>
+					<Link to="/play">Play a duel</Link>
+				</Button>
+			</section>
 
 			<section aria-labelledby="later-heading" className="mt-10">
 				<h2 id="later-heading" className="text-vellum-dim">

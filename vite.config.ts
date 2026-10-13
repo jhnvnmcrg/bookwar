@@ -11,7 +11,12 @@ const config = defineConfig({
 	resolve: { tsconfigPaths: true },
 	plugins: [
 		devtools(),
-		nitro({ rollupConfig: { external: [/^@sentry\//] } }),
+		nitro({
+			// Live games: the game server's WebSocket endpoint.
+			features: { websocket: true },
+			routes: { "/api/ws": "./src/server/ws.ts" },
+			rollupConfig: { external: [/^@sentry\//] },
+		}),
 		neon,
 		tailwindcss(),
 		tanstackStart(),

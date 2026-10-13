@@ -3,7 +3,11 @@ import { type GameState, rankFor, scoreForLevel } from "#/game";
 const format = (value: number) => value.toLocaleString("en-US");
 
 /** Score, rank and progress to the next rank. */
-export function ScorePanel({ game }: { game: GameState }) {
+export function ScorePanel({
+	game,
+}: {
+	game: Pick<GameState, "score" | "level" | "bestWord" | "wordsPlayed">;
+}) {
 	const floor = scoreForLevel(game.level);
 	const ceiling = scoreForLevel(game.level + 1);
 	const progress = Math.min(1, (game.score - floor) / (ceiling - floor));

@@ -1,7 +1,11 @@
 import { type GameState, prophecyBonus } from "#/game";
 
 /** This level's prophecy word, drawn as a vellum scroll. One line on phones. */
-export function ProphecyScroll({ game }: { game: GameState }) {
+export function ProphecyScroll({
+	game,
+}: {
+	game: Pick<GameState, "prophecy" | "level">;
+}) {
 	const { word, fulfilled } = game.prophecy;
 	const bonus = `+${prophecyBonus(game.level).toLocaleString("en-US")}`;
 	return (

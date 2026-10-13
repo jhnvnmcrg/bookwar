@@ -5,9 +5,8 @@ import {
 	type GameEvent,
 	type GameMode,
 	type GameState,
+	nearestCurse,
 	type PlayError,
-	ROWS,
-	rowOf,
 } from "#/game";
 import type { NoxMood } from "../brand/Nox";
 
@@ -33,23 +32,16 @@ export function openingLine(mode: GameMode): NoxLine {
 
 const points = (value: number) => value.toLocaleString("en-US");
 
-/** Rows between the lowest curse and the bottom of the board, or null when there are none. */
-export function nearestCurse(board: Board): number | null {
-	let nearest: number | null = null;
-	for (let index = 0; index < board.length; index++) {
-		if (board[index]?.kind !== "curse") continue;
-		const rows = ROWS - 1 - rowOf(index);
-		if (nearest === null || rows < nearest) nearest = rows;
-	}
-	return nearest;
-}
+export { nearestCurse };
 
 export function emptyCells(board: Board): number {
 	return board.filter((cell) => cell === null).length;
 }
 
 /** The warning for the current board, if it's in danger. */
-export function dangerLine(state: GameState): NoxLine | null {
+export function dangerLine(
+	state: Pick<GameState, "mode" | "board">,
+): NoxLine | null {
 	if (state.mode === "action") {
 		const space = emptyCells(state.board);
 		if (space === 0) {
@@ -78,7 +70,7 @@ export function dangerLine(state: GameState): NoxLine | null {
 
 export function lineForMove(
 	events: readonly GameEvent[],
-	state: GameState,
+	state: Pick<GameState, "mode" | "board">,
 ): NoxLine {
 	const find = <T extends GameEvent["type"]>(type: T) =>
 		events.find(
