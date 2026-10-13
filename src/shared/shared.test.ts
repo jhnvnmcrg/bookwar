@@ -90,10 +90,25 @@ describe("protocol", () => {
 				nickname: "Ann",
 			}),
 		).toBe(true);
-		expect(ok({ type: "createRoom", durationSec: 180, bot: "hard" })).toBe(
-			true,
+		expect(
+			ok({
+				type: "createRoom",
+				mode: "siege",
+				seconds: 60,
+				ai: { difficulty: "hard", count: 4 },
+			}),
+		).toBe(true);
+		expect(ok({ type: "createRoom", mode: "siege", seconds: 9999 })).toBe(
+			false,
 		);
-		expect(ok({ type: "createRoom", durationSec: 999 })).toBe(false);
+		expect(
+			ok({
+				type: "createRoom",
+				mode: "siege",
+				seconds: 60,
+				ai: { difficulty: "hard", count: 5 },
+			}),
+		).toBe(false);
 		expect(ok({ type: "joinRoom", code: "ABCD1" })).toBe(false);
 		expect(ok({ type: "joinRoom", code: "ABCDE" })).toBe(true);
 		expect(ok({ type: "play", seq: 1, path: [] })).toBe(false);

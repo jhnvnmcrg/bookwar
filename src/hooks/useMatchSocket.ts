@@ -81,6 +81,11 @@ export function useMatchSocket(
 		let attempt = 0;
 		let retryTimer: ReturnType<typeof setTimeout> | undefined;
 		let pingTimer: ReturnType<typeof setInterval> | undefined;
+		const quickPings: ReturnType<typeof setTimeout>[] = [];
+		const stopPings = () => {
+			clearInterval(pingTimer);
+			for (const timer of quickPings.splice(0)) clearTimeout(timer);
+		};
 
 		const connect = () => {
 			const scheme = window.location.protocol === "https:" ? "wss" : "ws";
@@ -91,11 +96,14 @@ export function useMatchSocket(
 			socket.onopen = () => {
 				attempt = 0;
 				setStatus("open");
-				const ping = () =>
-					socket.send(JSON.stringify({ type: "ping", t: Date.now() }));
+				const ping = () => {
+					if (socket.readyState === WebSocket.OPEN)
+						socket.send(JSON.stringify({ type: "ping", t: Date.now() }));
+				};
 				socket.send(JSON.stringify(hello()));
 				// A few quick pings to settle the clock, then a steady heartbeat.
-				for (const delay of [0, 300, 900]) setTimeout(ping, delay);
+				for (const delay of [0, 300, 900])
+					quickPings.push(setTimeout(ping, delay));
 				pingTimer = setInterval(ping, PING_MS);
 			};
 			socket.onmessage = (event) => {
@@ -106,7 +114,7 @@ export function useMatchSocket(
 				}
 			};
 			socket.onclose = () => {
-				clearInterval(pingTimer);
+				stopPings();
 				if (socketRef.current === socket) socketRef.current = null;
 				if (stopped) return;
 				setStatus("reconnecting");
@@ -119,7 +127,7 @@ export function useMatchSocket(
 		return () => {
 			stopped = true;
 			clearTimeout(retryTimer);
-			clearInterval(pingTimer);
+			stopPings();
 			socketRef.current?.close();
 			socketRef.current = null;
 		};

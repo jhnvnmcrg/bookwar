@@ -7,11 +7,6 @@ import {
 import { type CSSProperties, type ReactNode, useState } from "react";
 import { z } from "zod";
 import { Nox } from "#/components/brand/Nox";
-import { DuelLobby } from "#/components/duel/DuelLobby";
-import { DuelResult } from "#/components/duel/DuelResult";
-import { Countdown, MatchClock } from "#/components/duel/MatchClock";
-import { NameForm } from "#/components/duel/NameForm";
-import { OpponentCard } from "#/components/duel/OpponentCard";
 import { HexBoard } from "#/components/game/HexBoard";
 import { BOARD_ASPECT } from "#/components/game/hex-geometry";
 import { LevelBanner } from "#/components/game/LevelBanner";
@@ -19,34 +14,39 @@ import { NoxSays } from "#/components/game/NoxSays";
 import { ProphecyScroll } from "#/components/game/ProphecyScroll";
 import { ScorePanel } from "#/components/game/ScorePanel";
 import { WordTray } from "#/components/game/WordTray";
+import { Countdown, MatchClock } from "#/components/match/MatchClock";
+import { MatchLobby } from "#/components/match/MatchLobby";
+import { MatchResultDialog } from "#/components/match/MatchResultDialog";
+import { MODE_NAMES } from "#/components/match/modes";
+import { NameForm } from "#/components/match/NameForm";
+import { OpponentCard } from "#/components/match/OpponentCard";
+import { RivalList } from "#/components/match/RivalList";
+import { OutOverlay, RoundBreak } from "#/components/match/RoundOverlays";
 import { Button } from "#/components/ui/button";
 import { type Board, CELL_COUNT } from "#/game";
 import type { Dictionary } from "#/game/dictionary";
 import { useDictionary } from "#/hooks/useDictionary";
-import { type NewRoom, useDuel } from "#/hooks/useDuel";
+import { type NewRoom, useMatch } from "#/hooks/useMatch";
 import { loadProfile, type Profile, saveNickname } from "#/lib/profile";
 import {
 	BOT_DIFFICULTIES,
-	DEFAULT_DUEL_SECONDS,
-	DUEL_DURATIONS,
+	DEFAULT_SECONDS,
+	MATCH_MODES,
+	MODE_SECONDS,
+	type RoomView,
 } from "#/shared/protocol";
 
 const ROOM_CODE = /^[A-HJ-NP-Z2-9]{5}$/;
 
 const searchSchema = z.object({
-	/** For a new room: match length in seconds. */
-	length: z
-		.union(
-			DUEL_DURATIONS.map((d) => z.literal(d)) as [
-				z.ZodLiteral<120>,
-				z.ZodLiteral<180>,
-				z.ZodLiteral<300>,
-			],
-		)
-		.optional()
-		.catch(undefined),
-	/** For a new room: seat an AI rival and start at once. */
-	bot: z.enum(BOT_DIFFICULTIES).optional().catch(undefined),
+	/** For a new room: Duel or Siege. */
+	mode: z.enum(MATCH_MODES).optional().catch(undefined),
+	/** For a new room: match length (Duel) or round length (Siege), in seconds. */
+	seconds: z.number().int().optional().catch(undefined),
+	/** For a new room: fill the other seats with AI rivals and start at once. */
+	ai: z.enum(BOT_DIFFICULTIES).optional().catch(undefined),
+	/** Siege against AI: how many rivals (1–4). */
+	rivals: z.number().int().min(1).max(4).optional().catch(undefined),
 });
 
 export const Route = createFileRoute("/room/$code")({
@@ -62,7 +62,7 @@ export const Route = createFileRoute("/room/$code")({
 		stringify: ({ code }) => ({ code }),
 	},
 	validateSearch: searchSchema,
-	head: () => ({ meta: [{ title: "Duel | Bookwar" }] }),
+	head: () => ({ meta: [{ title: "Match | Bookwar" }] }),
 	component: RoomPage,
 });
 
@@ -76,6 +76,26 @@ function Message({ children }: { children: ReactNode }) {
 	);
 }
 
+/** The room to create from the search params, with unknown settings swapped for defaults. */
+function newRoomFrom(search: z.infer<typeof searchSchema>): NewRoom {
+	const mode = search.mode ?? "duel";
+	const seconds =
+		search.seconds !== undefined &&
+		(MODE_SECONDS[mode] as readonly number[]).includes(search.seconds)
+			? search.seconds
+			: DEFAULT_SECONDS[mode];
+	return {
+		mode,
+		seconds,
+		ai: search.ai
+			? {
+					difficulty: search.ai,
+					count: mode === "duel" ? 1 : (search.rivals ?? 4),
+				}
+			: undefined,
+	};
+}
+
 function RoomPage() {
 	const { code } = Route.useParams();
 	const search = Route.useSearch();
@@ -83,19 +103,17 @@ function RoomPage() {
 	const words = useDictionary();
 	const [profile, setProfile] = useState(loadProfile);
 	const [create] = useState<NewRoom | null>(() =>
-		code === "new"
-			? { durationSec: search.length ?? DEFAULT_DUEL_SECONDS, bot: search.bot }
-			: null,
+		code === "new" ? newRoomFrom(search) : null,
 	);
 
 	if (!profile.nickname) {
 		return (
 			<main className="mx-auto max-w-xl px-4 pt-16 pb-12">
 				<h1 className="font-stone text-4xl font-bold text-vellum">
-					Join the duel
+					Join the match
 				</h1>
 				<p className="mt-2 mb-6 text-vellum-dim">
-					Choose the name your rival will see.
+					Choose the name your rivals will see.
 				</p>
 				<NameForm
 					initial=""
@@ -124,7 +142,7 @@ function RoomPage() {
 		);
 	}
 	return (
-		<DuelRoom
+		<MatchRoom
 			code={code === "new" ? null : code}
 			create={create}
 			profile={profile}
@@ -141,7 +159,14 @@ function RoomPage() {
 	);
 }
 
-function DuelRoom({
+/** The lowest score among wizards still in, if there's more than one of them. */
+function lowestScore(room: RoomView): number | null {
+	const alive = room.seats.filter((seat) => !seat.out);
+	if (room.mode !== "siege" || alive.length < 2) return null;
+	return Math.min(...alive.map((seat) => seat.score));
+}
+
+function MatchRoom({
 	code,
 	create,
 	profile,
@@ -155,39 +180,39 @@ function DuelRoom({
 	onRoomCreated: (code: string) => void;
 }) {
 	const navigate = useNavigate();
-	const duel = useDuel({ code, create, profile, dictionary, onRoomCreated });
+	const match = useMatch({ code, create, profile, dictionary, onRoomCreated });
 	const leave = () => {
-		duel.leave();
+		match.leave();
 		void navigate({ to: "/play" });
 	};
 
-	if (duel.problem) {
+	if (match.problem) {
 		return (
 			<Message>
 				<Nox mood="worried" className="mx-auto h-24 w-20" />
-				<p className="mt-3">{duel.problem.message}</p>
+				<p className="mt-3">{match.problem.message}</p>
 				<Button className="mt-4" asChild>
-					<Link to="/play">Back to duels</Link>
+					<Link to="/play">Back to multiplayer</Link>
 				</Button>
 			</Message>
 		);
 	}
-	if (duel.left) {
+	if (match.left) {
 		return (
 			<Message>
 				<p>You've left the room.</p>
 				<Button className="mt-4" asChild>
-					<Link to="/play">Back to duels</Link>
+					<Link to="/play">Back to multiplayer</Link>
 				</Button>
 			</Message>
 		);
 	}
-	if (!duel.room) {
+	if (!match.room) {
 		return (
 			<Message>
 				<Nox mood="idle" className="mx-auto h-24 w-20" />
 				<p className="mt-3 text-vellum-dim">
-					{duel.status === "reconnecting"
+					{match.status === "reconnecting"
 						? "Reconnecting…"
 						: "Opening the room…"}
 				</p>
@@ -195,27 +220,34 @@ function DuelRoom({
 		);
 	}
 
-	const room = duel.room;
+	const room = match.room;
 	if (room.phase === "waiting") {
 		return (
-			<DuelLobby
+			<MatchLobby
 				room={room}
 				inviteUrl={`${window.location.origin}/room/${room.code}`}
-				onStart={duel.start}
-				onAddBot={duel.addBot}
-				onRemoveBot={duel.removeBot}
-				onSetDuration={duel.setDuration}
+				onStart={match.start}
+				onAddBot={match.addBot}
+				onRemoveBot={match.removeBot}
+				onSetSeconds={match.setSeconds}
 				onLeave={leave}
 			/>
 		);
 	}
 
-	const rival = room.seats.find((seat) => seat.seatId !== room.you);
-	const mine = duel.mine;
+	const siege = room.mode === "siege";
+	const mine = match.mine;
+	const me = match.me;
+	const rivals = room.seats.filter((seat) => seat.seatId !== room.you);
+	const lowest = lowestScore(room);
+	const alive = room.seats.filter((seat) => !seat.out).length;
+	const iAmLowest =
+		lowest !== null && me !== null && !me.out && me.score === lowest;
+	const live = room.phase === "playing" || room.phase === "roundEnd";
 
 	return (
 		<main className="mx-auto grid max-w-6xl gap-x-10 gap-y-4 px-4 pt-3 pb-8 lg:grid-cols-[15rem_minmax(0,34rem)_15rem] lg:grid-rows-[auto_auto_1fr] lg:justify-center lg:pt-6">
-			<header className="flex items-center justify-between gap-4 lg:col-span-3">
+			<header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 lg:col-span-3">
 				<Link
 					to="/"
 					className="font-display text-xl text-gold-bright hover:text-gold"
@@ -223,22 +255,45 @@ function DuelRoom({
 					Bookwar
 				</Link>
 				<div className="flex items-center gap-4">
-					{duel.status === "reconnecting" && (
+					{match.status === "reconnecting" && (
 						<p className="text-sm text-rubric" aria-live="polite">
 							Reconnecting…
 						</p>
 					)}
-					<p className="text-sm text-vellum-dim">Duel</p>
+					<p className="text-sm text-vellum-dim">
+						{siege && room.round > 0
+							? `Round ${room.round}, ${alive} wizards left`
+							: MODE_NAMES[room.mode]}
+					</p>
 					<MatchClock
 						endsAt={room.phase === "playing" ? room.phaseEndsAt : null}
-						serverNow={duel.serverNow}
+						serverNow={match.serverNow}
 					/>
 				</div>
+				{iAmLowest && room.phase === "playing" && (
+					<p
+						className="w-full text-right text-sm text-rubric"
+						aria-live="polite"
+					>
+						You have the lowest score. Score before the round ends!
+					</p>
+				)}
 			</header>
 
 			<div className="lg:col-start-3 lg:row-start-2 lg:pt-2">
-				{rival && (
-					<OpponentCard seat={rival} board={duel.opponents[rival.seatId]} />
+				{siege ? (
+					<RivalList
+						rivals={rivals}
+						boards={match.opponents}
+						lowestScore={lowest}
+					/>
+				) : (
+					rivals[0] && (
+						<OpponentCard
+							seat={rivals[0]}
+							board={match.opponents[rivals[0].seatId]}
+						/>
+					)
 				)}
 			</div>
 
@@ -257,34 +312,41 @@ function DuelRoom({
 					<div className="relative">
 						<HexBoard
 							board={mine?.board ?? EMPTY_BOARD}
-							selection={duel.selection}
-							casting={duel.casting}
-							rejectKey={duel.rejectKey}
-							shuffleKey={duel.shuffleKey}
-							locked={duel.locked}
+							selection={match.selection}
+							casting={match.casting}
+							rejectKey={match.rejectKey}
+							shuffleKey={match.shuffleKey}
+							locked={match.locked}
 							dangerEdge="bottom"
-							onPress={duel.press}
-							onDrag={duel.drag}
-							onRelease={duel.release}
-							onCancel={duel.cancelGesture}
-							onCastAnimated={duel.finishCast}
+							onPress={match.press}
+							onDrag={match.drag}
+							onRelease={match.release}
+							onCancel={match.cancelGesture}
+							onCastAnimated={match.finishCast}
 						/>
-						<LevelBanner banner={duel.banner} />
+						<LevelBanner banner={match.banner} />
 						{room.phase === "countdown" && room.phaseEndsAt !== null && (
-							<Countdown endsAt={room.phaseEndsAt} serverNow={duel.serverNow} />
+							<Countdown
+								endsAt={room.phaseEndsAt}
+								serverNow={match.serverNow}
+							/>
 						)}
+						{room.phase === "roundEnd" && !me?.out && (
+							<RoundBreak room={room} serverNow={match.serverNow} />
+						)}
+						{siege && live && me?.out && <OutOverlay me={me} onLeave={leave} />}
 					</div>
 				</div>
 				<div className="mt-4">
 					<WordTray
-						word={duel.word}
-						status={duel.wordStatus}
-						preview={duel.preview}
-						popups={duel.popups}
-						rejectKey={duel.rejectKey}
-						locked={duel.locked}
-						onCast={duel.cast}
-						onClear={duel.clear}
+						word={match.word}
+						status={match.wordStatus}
+						preview={match.preview}
+						popups={match.popups}
+						rejectKey={match.rejectKey}
+						locked={match.locked}
+						onCast={match.cast}
+						onClear={match.clear}
 					/>
 				</div>
 			</section>
@@ -294,8 +356,8 @@ function DuelRoom({
 				<div className="flex items-center gap-3 lg:block">
 					<Button
 						variant="outline"
-						disabled={duel.locked}
-						onClick={duel.shuffle}
+						disabled={match.locked}
+						onClick={match.shuffle}
 					>
 						Shuffle
 					</Button>
@@ -303,21 +365,24 @@ function DuelRoom({
 						New letters for every plain stone. Adds a curse rune.
 					</p>
 				</div>
-				<NoxSays line={duel.nox} />
+				<NoxSays line={match.nox} />
 				<Button
 					variant="ghost"
 					className="justify-start px-0 text-vellum-dim"
 					onClick={leave}
 				>
-					{room.phase === "playing" ? "Forfeit the duel" : "Leave the duel"}
+					{live && !me?.out
+						? `Forfeit the ${MODE_NAMES[room.mode].toLowerCase()}`
+						: "Leave the room"}
 				</Button>
 			</aside>
 
 			{room.phase === "finished" && room.result && (
-				<DuelResult
+				<MatchResultDialog
+					mode={room.mode}
 					result={room.result}
 					you={room.you}
-					onRematch={duel.rematch}
+					onRematch={match.rematch}
 					onLeave={leave}
 				/>
 			)}

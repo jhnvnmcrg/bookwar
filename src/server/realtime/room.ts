@@ -1,6 +1,8 @@
-// One Duel room: seats, the waiting → countdown → playing → finished cycle, and the referee.
-// The server owns every board; players only send the stones they picked.
+// One multiplayer room, Duel or Siege: seats, the waiting → countdown → playing (→ roundEnd →
+// playing …) → finished cycle, and the referee. The server owns every board; players only
+// send the stones they picked.
 import { createGame, reduce } from "../../game/reducer";
+import { Rng } from "../../game/rng";
 import type {
 	GameAction,
 	GameEvent,
@@ -13,10 +15,14 @@ import {
 	type EndReason,
 	type ErrorCode,
 	encodeMini,
+	type MatchMode,
 	type MatchResult,
+	MODE_SEATS,
+	MODE_SECONDS,
 	type MoveError,
 	type OutReason,
 	RECONNECT_GRACE_MS,
+	ROUND_BREAK_MS,
 	type RoomPhase,
 	type RoomView,
 	type ServerMessage,
@@ -55,6 +61,7 @@ export type RoomError = Extract<
 	| "not-host"
 	| "need-two-players"
 	| "not-in-room"
+	| "bad-setting"
 >;
 
 interface Seat {
@@ -67,33 +74,51 @@ interface Seat {
 	/** When the score last went up; on a tie the earlier player wins. */
 	scoredAt: number;
 	out: OutReason | null;
+	outRound: number | null;
+	/** 1 for the first player out, 2 for the next…; sets the final places. */
+	outOrder: number;
 	graceTimer: Timer | null;
 	stopBot: (() => void) | null;
 }
 
-const DUEL_SEATS = 2;
 /** Rooms nobody is using close after this long in the lobby or on the results screen. */
 const IDLE_CLOSE_MS = 10 * 60_000;
 const FINISHED_CLOSE_MS = 2 * 60_000;
+/** The phases in which a match is under way. */
+const LIVE: readonly RoomPhase[] = ["playing", "roundEnd"];
 
 export class Room implements BotHost {
 	phase: RoomPhase = "waiting";
-	durationSec: number;
+	seconds: number;
+	round = 0;
 	phaseEndsAt: number | null = null;
 	result: MatchResult | null = null;
+	cut: { seatId: string; round: number } | null = null;
 	closed = false;
 	private readonly seats: Seat[] = [];
 	private hostSeatId: string | null = null;
 	private phaseTimer: Timer | null = null;
 	private idleTimer: Timer | null = null;
+	private matchSeed = "";
+	private outCount = 0;
 
 	constructor(
 		readonly code: string,
-		durationSec: number,
+		readonly mode: MatchMode,
+		seconds: number,
 		private readonly deps: RoomDeps,
 	) {
-		this.durationSec = durationSec;
+		this.seconds = seconds;
 		this.scheduleIdleClose();
+	}
+
+	/** True when `seconds` is one of the times players can pick for this mode. */
+	static validSeconds(mode: MatchMode, seconds: number): boolean {
+		return (MODE_SECONDS[mode] as readonly number[]).includes(seconds);
+	}
+
+	private get capacity(): number {
+		return MODE_SEATS[this.mode];
 	}
 
 	private now(): number {
@@ -124,7 +149,7 @@ export class Room implements BotHost {
 			return null;
 		}
 		if (this.phase !== "waiting") return "match-running";
-		if (this.seats.length >= DUEL_SEATS) return "room-full";
+		if (this.seats.length >= this.capacity) return "room-full";
 		const seat = this.addSeat({ guestId, name, bot: null, connection });
 		this.hostSeatId ??= seat.seatId;
 		this.changed();
@@ -157,9 +182,11 @@ export class Room implements BotHost {
 	private graceOver(seat: Seat): void {
 		seat.graceTimer = null;
 		if (seat.connection) return;
-		if (this.phase === "countdown" || this.phase === "playing") {
-			if (this.phase === "countdown") this.cancelCountdown();
-			else this.knockOut(seat, "left");
+		if (this.phase === "countdown") this.cancelCountdown();
+		if (LIVE.includes(this.phase)) {
+			this.knockOut(seat, "left");
+			// The seat stays on the scoreboard while anyone is still watching.
+			if (this.seats.some((s) => s.connection)) return;
 		}
 		if (this.phase !== "finished" || !this.seats.some((s) => s.connection)) {
 			this.removeSeat(seat);
@@ -173,7 +200,7 @@ export class Room implements BotHost {
 		seat.connection = null;
 		if (seat.graceTimer) clearTimeout(seat.graceTimer);
 		if (this.phase === "countdown") this.cancelCountdown();
-		if (this.phase === "playing") {
+		if (LIVE.includes(this.phase)) {
 			// Forfeit: the seat stays on the results, but the guest is free to go elsewhere.
 			this.knockOut(seat, "left");
 			this.deps.onSeatGone(guestId, this);
@@ -186,10 +213,12 @@ export class Room implements BotHost {
 	addBot(guestId: string, difficulty: BotDifficulty): RoomError | null {
 		const error = this.hostCheck(guestId);
 		if (error) return error;
-		if (this.seats.length >= DUEL_SEATS) return "room-full";
+		if (this.seats.length >= this.capacity) return "room-full";
+		const taken = this.seats.filter((s) => s.bot === difficulty).length;
 		this.addSeat({
 			guestId: null,
-			name: BOT_NAMES[difficulty],
+			// A second "Adept Elowen" becomes "Adept Elowen II".
+			name: `${BOT_NAMES[difficulty]}${["", " II", " III", " IV", " V"][taken] ?? ""}`,
 			bot: difficulty,
 			connection: null,
 		});
@@ -207,10 +236,11 @@ export class Room implements BotHost {
 		return null;
 	}
 
-	setDuration(guestId: string, durationSec: number): RoomError | null {
+	setSeconds(guestId: string, seconds: number): RoomError | null {
 		const error = this.hostCheck(guestId);
 		if (error) return error;
-		this.durationSec = durationSec;
+		if (!Room.validSeconds(this.mode, seconds)) return "bad-setting";
+		this.seconds = seconds;
 		this.changed();
 		return null;
 	}
@@ -218,7 +248,13 @@ export class Room implements BotHost {
 	start(guestId: string): RoomError | null {
 		const error = this.hostCheck(guestId);
 		if (error) return error;
-		if (this.seats.length < DUEL_SEATS) return "need-two-players";
+		return this.startCountdown();
+	}
+
+	/** Starts without a host's say-so (quick matches and AI games). */
+	startCountdown(): RoomError | null {
+		if (this.phase !== "waiting") return "match-running";
+		if (this.seats.length < 2) return "need-two-players";
 		this.clearIdle();
 		this.phase = "countdown";
 		this.phaseEndsAt = this.now() + COUNTDOWN_MS;
@@ -239,8 +275,12 @@ export class Room implements BotHost {
 		for (const seat of this.seats) {
 			seat.game = null;
 			seat.out = null;
+			seat.outRound = null;
+			seat.outOrder = 0;
 		}
 		this.phase = "waiting";
+		this.round = 0;
+		this.cut = null;
 		this.result = null;
 		this.changed();
 		return null;
@@ -263,6 +303,8 @@ export class Room implements BotHost {
 			game: null,
 			scoredAt: 0,
 			out: null,
+			outRound: null,
+			outOrder: 0,
 			graceTimer: null,
 			stopBot: null,
 		};
@@ -297,23 +339,23 @@ export class Room implements BotHost {
 	}
 
 	private beginMatch(): void {
-		const matchSeed = this.deps.randomId();
+		this.matchSeed = this.deps.randomId();
+		this.outCount = 0;
+		this.cut = null;
 		const start = this.now();
 		const newGame =
 			this.deps.newGame ??
 			((seed: string) => createGame({ mode: "classic", seed }));
 		this.seats.forEach((seat, i) => {
 			// Every seat gets its own stones; the seed never leaves the server.
-			seat.game = newGame(`${matchSeed}-${i}`, i);
+			seat.game = newGame(`${this.matchSeed}-${i}`, i);
 			seat.scoredAt = start;
 			seat.out = null;
+			seat.outRound = null;
+			seat.outOrder = 0;
 		});
-		this.phase = "playing";
-		this.phaseEndsAt = start + this.durationSec * 1000;
-		this.phaseTimer = setTimeout(
-			() => this.finish("time"),
-			this.durationSec * 1000,
-		);
+		this.round = this.mode === "siege" ? 1 : 0;
+		this.startPlaying();
 		for (const seat of this.seats) {
 			this.sendBoard(seat, null, null, []);
 			this.broadcastMini(seat);
@@ -323,6 +365,59 @@ export class Room implements BotHost {
 			if (seat.bot)
 				seat.stopBot = this.deps.startBot(this, seat.seatId, seat.bot);
 		}
+	}
+
+	/** Runs the clock: the whole match for a Duel, one round for a Siege. */
+	private startPlaying(): void {
+		this.phase = "playing";
+		this.phaseEndsAt = this.now() + this.seconds * 1000;
+		this.phaseTimer = setTimeout(
+			() => (this.mode === "siege" ? this.endRound() : this.finish("time")),
+			this.seconds * 1000,
+		);
+	}
+
+	/** Siege: the lowest score is cut; then a short break, or the end if one wizard is left. */
+	private endRound(): void {
+		const alive = this.alive();
+		if (alive.length > 1) {
+			const cut = this.lowestScore(alive);
+			this.markOut(cut, "cut");
+			this.cut = { seatId: cut.seatId, round: this.round };
+		}
+		if (this.alive().length <= 1) {
+			this.finish("last-standing");
+			return;
+		}
+		this.phase = "roundEnd";
+		this.phaseEndsAt = this.now() + ROUND_BREAK_MS;
+		this.phaseTimer = setTimeout(() => {
+			this.round++;
+			this.startPlaying();
+			this.broadcastRoom();
+		}, ROUND_BREAK_MS);
+		this.broadcastRoom();
+	}
+
+	/**
+	 * Who is cut at the end of a round: the lowest score. On a tie, whoever reached that score
+	 * last goes; then whoever used more words; then a coin flip seeded by the match.
+	 */
+	private lowestScore(alive: readonly Seat[]): Seat {
+		const score = (seat: Seat) => seat.game?.score ?? 0;
+		const words = (seat: Seat) => seat.game?.wordsPlayed ?? 0;
+		const lowest = Math.min(...alive.map(score));
+		let tied = alive.filter((seat) => score(seat) === lowest);
+		const latest = Math.max(...tied.map((seat) => seat.scoredAt));
+		tied = tied.filter((seat) => seat.scoredAt === latest);
+		const most = Math.max(...tied.map(words));
+		tied = tied.filter((seat) => words(seat) === most);
+		if (tied.length === 1) return tied[0];
+		return Rng.fromSeed(`${this.matchSeed}-cut-${this.round}`).pick(tied);
+	}
+
+	private alive(): Seat[] {
+		return this.seats.filter((seat) => !seat.out);
 	}
 
 	private applyMove(
@@ -361,19 +456,29 @@ export class Room implements BotHost {
 		);
 	}
 
+	/** A bot's move. Returns false once the bot is done (match over or knocked out). */
 	botMove(seatId: string, action: GameAction): boolean {
 		const seat = this.seats.find((s) => s.seatId === seatId);
 		if (!seat) return false;
+		// Moves made during a Siege break don't count, but the bot keeps going.
 		this.applyMove(seat, action);
-		return this.phase === "playing" && !seat.out;
+		return LIVE.includes(this.phase) && !seat.out;
 	}
 
-	private knockOut(seat: Seat, reason: OutReason): void {
-		if (seat.out || this.phase !== "playing") return;
+	private markOut(seat: Seat, reason: OutReason): void {
 		seat.out = reason;
+		seat.outRound = this.mode === "siege" ? this.round : null;
+		seat.outOrder = ++this.outCount;
 		seat.stopBot?.();
-		const alive = this.seats.filter((s) => !s.out);
-		if (alive.length <= 1) this.finish(reason);
+		seat.stopBot = null;
+	}
+
+	/** Out mid-match (tower fell, or left). The match ends if that leaves one wizard. */
+	private knockOut(seat: Seat, reason: "tower" | "left"): void {
+		if (seat.out || !LIVE.includes(this.phase)) return;
+		this.markOut(seat, reason);
+		if (this.alive().length <= 1)
+			this.finish(this.mode === "siege" ? "last-standing" : reason);
 		else this.broadcastRoom();
 	}
 
@@ -386,9 +491,12 @@ export class Room implements BotHost {
 			seat.stopBot = null;
 		}
 		const score = (seat: Seat) => seat.game?.score ?? 0;
+		// Wizards still standing come first (best score first); then the eliminated, the last
+		// one out placing highest.
 		const ranked = [...this.seats].sort(
 			(a, b) =>
 				Number(Boolean(a.out)) - Number(Boolean(b.out)) ||
+				b.outOrder - a.outOrder ||
 				score(b) - score(a) ||
 				a.scoredAt - b.scoredAt,
 		);
@@ -406,7 +514,9 @@ export class Room implements BotHost {
 				seatId: seat.seatId,
 				name: seat.name,
 				score: score(seat),
-				place: draw ? 1 : i + 1,
+				place: draw && i < 2 ? 1 : i + 1,
+				out: seat.out,
+				outRound: seat.outRound,
 			})),
 		};
 		this.phase = "finished";
@@ -455,9 +565,10 @@ export class Room implements BotHost {
 	view(seat: Seat | null): RoomView {
 		return {
 			code: this.code,
-			mode: "duel",
+			mode: this.mode,
 			phase: this.phase,
-			durationSec: this.durationSec,
+			seconds: this.seconds,
+			round: this.round,
 			phaseEndsAt: this.phaseEndsAt,
 			seats: this.seats.map((s) => ({
 				seatId: s.seatId,
@@ -467,8 +578,10 @@ export class Room implements BotHost {
 				connected: s.bot !== null || s.connection !== null,
 				score: s.game?.score ?? 0,
 				out: s.out,
+				outRound: s.outRound,
 			})),
 			you: seat?.seatId ?? null,
+			cut: this.cut,
 			result: this.result,
 		};
 	}

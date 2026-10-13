@@ -9,12 +9,20 @@ import { loadSave, loadScores } from "#/lib/guest-storage";
 
 export const Route = createFileRoute("/")({ component: Title });
 
-const LATER_MODES = [
+const MULTIPLAYER = [
 	{
-		name: "Siege",
-		text: "Up to five wizards on their own boards. Lowest score each round is out.",
+		mode: "duel",
+		name: "Duel",
+		text: "You against one rival, on the clock. Quick match, a friend with a room code, or the AI.",
+		action: "Play a duel",
 	},
-];
+	{
+		mode: "siege",
+		name: "Siege",
+		text: "Up to five wizards. The lowest score is cut each round until one is left standing.",
+		action: "Play a siege",
+	},
+] as const;
 
 interface ModeProgress {
 	readonly save: GameState | null;
@@ -117,33 +125,25 @@ function Title() {
 				</Link>
 			</p>
 
-			<section aria-labelledby="duel-heading" className="mt-6 sm:pl-29">
-				<h2
-					id="duel-heading"
-					className="font-stone text-3xl font-bold text-gold-bright"
-				>
-					Duel
+			<section aria-labelledby="multi-heading" className="mt-6 sm:pl-29">
+				<h2 id="multi-heading" className="sr-only">
+					Play with others
 				</h2>
-				<p className="mt-1 text-vellum-dim">
-					You against one rival, on the clock. Invite a friend with a room code,
-					or take on the AI.
-				</p>
-				<Button size="lg" className="mt-4 px-6 font-bold" asChild>
-					<Link to="/play">Play a duel</Link>
-				</Button>
-			</section>
-
-			<section aria-labelledby="later-heading" className="mt-10">
-				<h2 id="later-heading" className="text-vellum-dim">
-					Coming to Bookwar
-				</h2>
-				<ul className="mt-2">
-					{LATER_MODES.map((mode) => (
-						<li key={mode.name} className="border-t border-gold/20 py-3">
-							<p className="font-stone text-xl font-bold text-vellum">
-								{mode.name}
-							</p>
-							<p className="text-sm text-vellum-dim">{mode.text}</p>
+				<ul>
+					{MULTIPLAYER.map((entry) => (
+						<li
+							key={entry.mode}
+							className="border-b border-gold/20 pb-6 not-first:pt-6"
+						>
+							<h3 className="font-stone text-3xl font-bold text-gold-bright">
+								{entry.name}
+							</h3>
+							<p className="mt-1 text-vellum-dim">{entry.text}</p>
+							<Button size="lg" className="mt-4 px-6 font-bold" asChild>
+								<Link to="/play" search={{ mode: entry.mode }}>
+									{entry.action}
+								</Link>
+							</Button>
 						</li>
 					))}
 				</ul>

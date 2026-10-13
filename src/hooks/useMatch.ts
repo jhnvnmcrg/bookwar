@@ -9,9 +9,9 @@ import type { Dictionary } from "#/game/dictionary";
 import type { Profile } from "#/lib/profile";
 import {
 	type BotDifficulty,
-	type DuelDuration,
 	decodeMini,
 	type ErrorCode,
+	type MatchMode,
 	type MoveError,
 	type PublicGameState,
 	type RoomView,
@@ -42,26 +42,35 @@ interface PendingCast {
 }
 
 export interface NewRoom {
-	readonly durationSec: DuelDuration;
-	readonly bot?: BotDifficulty;
+	readonly mode: MatchMode;
+	readonly seconds: number;
+	/** Fill the other seats with AI rivals and start at once. */
+	readonly ai?: { readonly difficulty: BotDifficulty; readonly count: number };
 }
 
-const WAITING_LINE: NoxLine = {
-	mood: "idle",
-	text: "Spell faster than your rival. Highest score when the clock runs out wins.",
+const OPENING_LINES: Record<MatchMode, NoxLine> = {
+	duel: {
+		mood: "idle",
+		text: "Spell faster than your rival. Highest score when the clock runs out wins.",
+	},
+	siege: {
+		mood: "idle",
+		text: "Keep off the bottom of the scoreboard: the lowest score is cut at the end of each round.",
+	},
 };
 
 function moveErrorLine(error: MoveError, word: string): NoxLine {
 	return error === "not-playing"
-		? { mood: "idle", text: "The duel is over; that word didn't count." }
+		? { mood: "idle", text: "Time was up; that word didn't count." }
 		: lineForRejection(error, word);
 }
 
 /**
- * One Duel from this player's side: the room, our board (the server's copy), the opponent's
- * board, and our moves. Our cast animates straight away; the server's answer settles it.
+ * One Duel or Siege from this player's side: the room, our board (the server's copy), the
+ * rivals' boards, and our moves. Our cast animates straight away; the server's answer
+ * settles it.
  */
-export function useDuel({
+export function useMatch({
 	code,
 	create,
 	profile,
@@ -92,7 +101,9 @@ export function useDuel({
 	const seq = useRef(0);
 	const roomCode = useRef(code);
 	const [shuffleKey, setShuffleKey] = useState(0);
-	const [nox, setNox] = useState<NoxLine>(WAITING_LINE);
+	const [nox, setNox] = useState<NoxLine>(
+		OPENING_LINES[create?.mode ?? "duel"],
+	);
 	const feedback = useMoveFeedback();
 
 	const me = room?.seats.find((seat) => seat.seatId === room.you) ?? null;
@@ -194,7 +205,8 @@ export function useDuel({
 					onRoomCreated(message.room.code);
 				}
 				setRoom(message.room);
-				if (message.room.phase === "countdown") setNox(WAITING_LINE);
+				if (message.room.phase === "countdown")
+					setNox(OPENING_LINES[message.room.mode]);
 				return;
 			case "board": {
 				const current = pending.current;
@@ -284,8 +296,8 @@ export function useDuel({
 		addBot: (difficulty: BotDifficulty) =>
 			socket.send({ type: "addBot", difficulty }),
 		removeBot: (seatId: string) => socket.send({ type: "removeSeat", seatId }),
-		setDuration: (durationSec: DuelDuration) =>
-			socket.send({ type: "setDuration", durationSec }),
+		setSeconds: (seconds: number) =>
+			socket.send({ type: "setSeconds", seconds }),
 		rematch: () => socket.send({ type: "rematch" }),
 		leave: () => socket.send({ type: "leaveRoom" }),
 	};

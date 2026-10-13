@@ -4,10 +4,11 @@ import { Button } from "#/components/ui/button";
 import {
 	BOT_DIFFICULTIES,
 	type BotDifficulty,
-	DUEL_DURATIONS,
-	type DuelDuration,
+	MODE_SEATS,
+	MODE_SECONDS,
 	type RoomView,
 } from "#/shared/protocol";
+import { MODE_NAMES, secondsLabel } from "./modes";
 
 const DIFFICULTY_NAMES: Record<BotDifficulty, string> = {
 	easy: "Easy",
@@ -15,14 +16,14 @@ const DIFFICULTY_NAMES: Record<BotDifficulty, string> = {
 	hard: "Hard",
 };
 
-/** The room before a duel: share the code, wait for a rival (or add an AI), then start. */
-export function DuelLobby({
+/** The room before a match: share the code, wait for rivals (or add AI), then start. */
+export function MatchLobby({
 	room,
 	inviteUrl,
 	onStart,
 	onAddBot,
 	onRemoveBot,
-	onSetDuration,
+	onSetSeconds,
 	onLeave,
 }: {
 	room: RoomView;
@@ -30,15 +31,17 @@ export function DuelLobby({
 	onStart: () => void;
 	onAddBot: (difficulty: BotDifficulty) => void;
 	onRemoveBot: (seatId: string) => void;
-	onSetDuration: (seconds: DuelDuration) => void;
+	onSetSeconds: (seconds: number) => void;
 	onLeave: () => void;
 }) {
 	const [copied, setCopied] = useState(false);
 	const me = room.seats.find((seat) => seat.seatId === room.you);
 	const host = room.seats.find((seat) => seat.host);
 	const isHost = me?.host ?? false;
-	const bot = room.seats.find((seat) => seat.bot);
-	const full = room.seats.length >= 2;
+	const capacity = MODE_SEATS[room.mode];
+	const free = capacity - room.seats.length;
+	const canStart = room.seats.length >= 2;
+	const siege = room.mode === "siege";
 
 	async function copyInvite() {
 		try {
@@ -59,10 +62,16 @@ export function DuelLobby({
 				Bookwar
 			</Link>
 			<h1 className="mt-8 font-stone text-4xl font-bold text-vellum">
-				Duel room
+				{MODE_NAMES[room.mode]} room
 			</h1>
+			{siege && (
+				<p className="mt-2 text-vellum-dim">
+					Up to five wizards. At the end of every round the lowest score is cut,
+					until one is left.
+				</p>
+			)}
 
-			<section aria-label="Invite a rival" className="mt-6">
+			<section aria-label="Invite rivals" className="mt-6">
 				<p className="text-sm text-vellum-dim">Room code</p>
 				<p className="figures font-stone text-5xl font-bold tracking-[0.2em] text-gold-bright">
 					{room.code}
@@ -72,14 +81,14 @@ export function DuelLobby({
 						Copy invite link
 					</Button>
 					<p className="text-sm text-vellum-dim" aria-live="polite">
-						{copied ? "Link copied." : "Send the link or the code to a friend."}
+						{copied ? "Link copied." : "Send the link or the code to friends."}
 					</p>
 				</div>
 			</section>
 
 			<section aria-labelledby="seats-heading" className="mt-8">
 				<h2 id="seats-heading" className="text-vellum-dim">
-					Wizards
+					Wizards ({room.seats.length} of {capacity})
 				</h2>
 				<ul className="mt-2">
 					{room.seats.map((seat) => (
@@ -113,9 +122,11 @@ export function DuelLobby({
 							)}
 						</li>
 					))}
-					{!full && (
+					{free > 0 && (
 						<li className="border-t border-gold/20 py-3 text-vellum-dim">
-							Waiting for a rival to join…
+							{siege
+								? `${free} ${free === 1 ? "seat" : "seats"} open. Waiting for rivals…`
+								: "Waiting for a rival to join…"}
 						</li>
 					)}
 				</ul>
@@ -127,24 +138,28 @@ export function DuelLobby({
 					className="mt-8 flex flex-col gap-6"
 				>
 					<div>
-						<p className="text-sm text-vellum-dim">Match length</p>
+						<p className="text-sm text-vellum-dim">
+							{siege ? "Round length" : "Match length"}
+						</p>
 						<div className="mt-2 flex gap-2">
-							{DUEL_DURATIONS.map((seconds) => (
+							{MODE_SECONDS[room.mode].map((seconds) => (
 								<Button
 									key={seconds}
-									variant={room.durationSec === seconds ? "default" : "outline"}
-									aria-pressed={room.durationSec === seconds}
-									onClick={() => onSetDuration(seconds)}
+									variant={room.seconds === seconds ? "default" : "outline"}
+									aria-pressed={room.seconds === seconds}
+									onClick={() => onSetSeconds(seconds)}
 								>
-									{seconds / 60} min
+									{secondsLabel(seconds)}
 								</Button>
 							))}
 						</div>
 					</div>
-					{!full && !bot && (
+					{free > 0 && (
 						<div>
 							<p className="text-sm text-vellum-dim">
-								No one to play? Add an AI rival.
+								{siege
+									? "Fill a seat with an AI rival."
+									: "No one to play? Add an AI rival."}
 							</p>
 							<div className="mt-2 flex gap-2">
 								{BOT_DIFFICULTIES.map((difficulty) => (
@@ -163,12 +178,12 @@ export function DuelLobby({
 						<Button
 							size="lg"
 							className="px-8 font-bold"
-							disabled={!full}
+							disabled={!canStart}
 							onClick={onStart}
 						>
-							Start duel
+							Start {MODE_NAMES[room.mode].toLowerCase()}
 						</Button>
-						{!full && (
+						{!canStart && (
 							<p className="mt-2 text-sm text-vellum-dim">
 								You can start once a rival is here.
 							</p>
@@ -177,8 +192,10 @@ export function DuelLobby({
 				</section>
 			) : (
 				<p className="mt-8 text-vellum-dim">
-					Waiting for {host?.name ?? "the host"} to start a{" "}
-					{room.durationSec / 60}-minute duel.
+					Waiting for {host?.name ?? "the host"} to start
+					{siege
+						? ` (rounds of ${secondsLabel(room.seconds)}).`
+						: ` a ${secondsLabel(room.seconds)} duel.`}
 				</p>
 			)}
 

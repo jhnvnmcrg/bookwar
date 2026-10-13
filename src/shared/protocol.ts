@@ -12,14 +12,32 @@ import type {
 	PlayError,
 } from "../game/types";
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const WS_PATH = "/api/ws";
 
-/** Duel lengths players can pick, in seconds. */
-export const DUEL_DURATIONS = [120, 180, 300] as const;
-export type DuelDuration = (typeof DUEL_DURATIONS)[number];
-export const DEFAULT_DUEL_SECONDS: DuelDuration = 180;
+export const MATCH_MODES = ["duel", "siege"] as const;
+export type MatchMode = (typeof MATCH_MODES)[number];
+
+/** Seats per room. */
+export const MODE_SEATS: Record<MatchMode, number> = { duel: 2, siege: 5 };
+
+/**
+ * The time players can pick, in seconds: the whole match for a Duel, each round for a Siege.
+ */
+export const MODE_SECONDS = {
+	duel: [120, 180, 300],
+	siege: [30, 60, 90],
+} as const satisfies Record<MatchMode, readonly number[]>;
+export const DEFAULT_SECONDS: Record<MatchMode, number> = {
+	duel: 180,
+	siege: 60,
+};
+
 export const COUNTDOWN_MS = 3000;
+/** Siege: the pause after each round's cut before the next round starts. */
+export const ROUND_BREAK_MS = 5000;
+/** Quick match: how long to wait for more players before starting with whoever is there. */
+export const QUICK_WAIT_MS = 30_000;
 /** How long a disconnected player keeps their seat. */
 export const RECONNECT_GRACE_MS = 20_000;
 export const MAX_MESSAGE_BYTES = 4096;
@@ -28,14 +46,8 @@ export const BOT_DIFFICULTIES = ["easy", "medium", "hard"] as const;
 export type BotDifficulty = (typeof BOT_DIFFICULTIES)[number];
 
 const ROOM_CODE = /^[A-HJ-NP-Z2-9]{5}$/;
-const durationSec = z.union(
-	DUEL_DURATIONS.map((d) => z.literal(d)) as [
-		z.ZodLiteral<120>,
-		z.ZodLiteral<180>,
-		z.ZodLiteral<300>,
-	],
-);
 const seq = z.number().int().nonnegative();
+const seconds = z.number().int().min(10).max(600);
 
 export const ClientMessageSchema = z.discriminatedUnion("type", [
 	z.object({
@@ -46,15 +58,23 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
 	}),
 	z.object({
 		type: z.literal("createRoom"),
-		durationSec,
-		/** Seat an AI rival straight away and start the match. */
-		bot: z.enum(BOT_DIFFICULTIES).optional(),
+		mode: z.enum(MATCH_MODES),
+		seconds,
+		/** Fill the other seats with AI rivals straight away and start the match. */
+		ai: z
+			.object({
+				difficulty: z.enum(BOT_DIFFICULTIES),
+				count: z.number().int().min(1).max(4),
+			})
+			.optional(),
 	}),
 	z.object({ type: z.literal("joinRoom"), code: z.string().regex(ROOM_CODE) }),
 	z.object({ type: z.literal("leaveRoom") }),
+	z.object({ type: z.literal("quickMatch"), mode: z.enum(MATCH_MODES) }),
+	z.object({ type: z.literal("cancelQueue") }),
 	z.object({ type: z.literal("addBot"), difficulty: z.enum(BOT_DIFFICULTIES) }),
 	z.object({ type: z.literal("removeSeat"), seatId: z.string().max(32) }),
-	z.object({ type: z.literal("setDuration"), durationSec }),
+	z.object({ type: z.literal("setSeconds"), seconds }),
 	z.object({ type: z.literal("start") }),
 	z.object({
 		type: z.literal("play"),
@@ -68,9 +88,17 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
 
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
 
-export type RoomPhase = "waiting" | "countdown" | "playing" | "finished";
-export type OutReason = "tower" | "left";
-export type EndReason = "time" | "tower" | "left";
+/** Siege adds a short "roundEnd" break between rounds. */
+export type RoomPhase =
+	| "waiting"
+	| "countdown"
+	| "playing"
+	| "roundEnd"
+	| "finished";
+/** "cut": lowest score at the end of a Siege round. */
+export type OutReason = "tower" | "left" | "cut";
+/** "last-standing": a Siege ended with one wizard left. */
+export type EndReason = "time" | "tower" | "left" | "last-standing";
 
 export interface SeatView {
 	readonly seatId: string;
@@ -80,31 +108,53 @@ export interface SeatView {
 	readonly connected: boolean;
 	readonly score: number;
 	readonly out: OutReason | null;
+	/** The Siege round they went out in. */
+	readonly outRound: number | null;
+}
+
+export interface Standing {
+	readonly seatId: string;
+	readonly name: string;
+	readonly score: number;
+	readonly place: number;
+	readonly out: OutReason | null;
+	readonly outRound: number | null;
 }
 
 export interface MatchResult {
-	/** null when the duel is a draw. */
+	/** null when a duel is a draw. */
 	readonly winnerSeatId: string | null;
 	readonly reason: EndReason;
-	readonly standings: readonly {
-		readonly seatId: string;
-		readonly name: string;
-		readonly score: number;
-		readonly place: number;
-	}[];
+	readonly standings: readonly Standing[];
 }
 
 export interface RoomView {
 	readonly code: string;
-	readonly mode: "duel";
+	readonly mode: MatchMode;
 	readonly phase: RoomPhase;
-	readonly durationSec: number;
-	/** Server time (ms) when the countdown or match ends. */
+	/** Duel: match length. Siege: round length. */
+	readonly seconds: number;
+	/** Siege: the current round (from 1), or 0 before the match. */
+	readonly round: number;
+	/** Server time (ms) when the countdown, match, round or break ends. */
 	readonly phaseEndsAt: number | null;
 	readonly seats: readonly SeatView[];
 	/** The receiving player's seat. */
 	readonly you: string | null;
+	/** Siege: who was cut at the end of the last round. */
+	readonly cut: { readonly seatId: string; readonly round: number } | null;
 	readonly result: MatchResult | null;
+}
+
+/** Where this player stands in a quick-match queue. */
+export interface QueueView {
+	readonly mode: MatchMode;
+	/** Players waiting, including you. */
+	readonly players: number;
+	/** When the match will start with whoever is there (server time), if known. */
+	readonly startsAt: number | null;
+	/** Nobody else turned up in time: the page offers a game against the AI. */
+	readonly alone: boolean;
 }
 
 /** A player's game without the parts that would let them predict future stones. */
@@ -140,6 +190,7 @@ export type ErrorCode =
 	| "not-host"
 	| "not-in-room"
 	| "need-two-players"
+	| "bad-setting"
 	| "rate-limited";
 
 export type ServerMessage =
@@ -151,6 +202,8 @@ export type ServerMessage =
 	  }
 	/** You are no longer in the room (you left, or it closed). */
 	| { readonly type: "left" }
+	/** Your quick-match queue status; null once you're out of the queue. */
+	| { readonly type: "queue"; readonly queue: QueueView | null }
 	/** Your board: at match start, after reconnecting (seq null), or after your move. */
 	| {
 			readonly type: "board";

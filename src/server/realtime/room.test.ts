@@ -15,7 +15,9 @@ import { boardFromRows, classicWith, down } from "../../game/test-utils";
 import type { GameState, WordList } from "../../game/types";
 import {
 	COUNTDOWN_MS,
+	type MatchMode,
 	RECONNECT_GRACE_MS,
+	ROUND_BREAK_MS,
 	type ServerMessage,
 } from "../../shared/protocol";
 import { startBot } from "../bot/bot";
@@ -53,10 +55,11 @@ let onClose = vi.fn<(room: Room) => void>();
 function makeRoom(
 	overrides: Partial<RoomDeps> = {},
 	words: WordList = dictionary,
+	mode: MatchMode = "duel",
 ) {
 	onClose = vi.fn<(room: Room) => void>();
 	const random = Rng.fromSeed("bots");
-	return new Room("ABCDE", 180, {
+	return new Room("ABCDE", mode, mode === "duel" ? 180 : 60, {
 		words,
 		randomId: () => `id-${++ids}`,
 		onSeatGone: () => {},
@@ -319,4 +322,148 @@ it("keeps public games free of server-only fields", () => {
 	const state: GameState = catGame(false)("secret");
 	const { ann } = duel({ newGame: () => state }, smallWords);
 	expect(JSON.stringify(ann.messages)).not.toContain("secret");
+});
+
+/** A Siege with these human players (plus Hard bots), past the countdown. */
+function siege(
+	names: readonly string[],
+	{
+		bots = 0,
+		overrides = {},
+		words,
+	}: { bots?: number; overrides?: Partial<RoomDeps>; words?: WordList } = {},
+) {
+	const room = makeRoom(overrides, words, "siege");
+	const players = names.map((name) => {
+		const connection = new FakeConnection();
+		room.join(`guest-${name}`, name, connection);
+		return connection;
+	});
+	for (let i = 0; i < bots; i++) room.addBot(`guest-${names[0]}`, "hard");
+	expect(room.start(`guest-${names[0]}`)).toBeNull();
+	vi.advanceTimersByTime(COUNTDOWN_MS);
+	return { room, players, host: players[0] };
+}
+
+const ROUND_MS = 60_000;
+const outOf = (connection: FakeConnection) =>
+	connection.room.seats.filter((seat) => seat.out !== null);
+const seatNamed = (connection: FakeConnection, name: string) =>
+	connection.room.seats.find((seat) => seat.name === name);
+
+describe("Siege", () => {
+	it("seats up to five wizards and needs two to start", () => {
+		const room = makeRoom({}, dictionary, "siege");
+		room.join("guest-1", "One", new FakeConnection());
+		expect(room.start("guest-1")).toBe("need-two-players");
+		for (let i = 2; i <= 5; i++) {
+			expect(room.join(`guest-${i}`, `P${i}`, new FakeConnection())).toBeNull();
+		}
+		expect(room.join("guest-6", "Six", new FakeConnection())).toBe("room-full");
+	});
+
+	it("cuts the lowest score each round until one wizard is left", () => {
+		const { room, host } = siege(["Ann", "Bob", "Cy"], { bots: 2 });
+		expect(host.room).toMatchObject({
+			mode: "siege",
+			round: 1,
+			phase: "playing",
+		});
+		for (let round = 1; round <= 4; round++) {
+			vi.advanceTimersByTime(ROUND_MS);
+			expect(outOf(host)).toHaveLength(round);
+			expect(host.room.cut?.round).toBe(round);
+			const cut = host.room.seats.find(
+				(s) => s.seatId === host.room.cut?.seatId,
+			);
+			expect(cut).toMatchObject({ out: "cut", outRound: round });
+			if (round < 4) {
+				expect(host.room.phase).toBe("roundEnd");
+				vi.advanceTimersByTime(ROUND_BREAK_MS);
+				expect(host.room).toMatchObject({ phase: "playing", round: round + 1 });
+			}
+		}
+		expect(room.phase).toBe("finished");
+		const result = host.room.result;
+		expect(result?.reason).toBe("last-standing");
+		expect(result?.standings.map((s) => s.place)).toEqual([1, 2, 3, 4, 5]);
+		expect(result?.standings[0].out).toBeNull();
+		expect(result?.standings.slice(1).map((s) => s.outRound)).toEqual([
+			4, 3, 2, 1,
+		]);
+	});
+
+	it("keeps whoever reached a tied score first", () => {
+		const { room, host } = siege(["Ann", "Bob", "Cy"], {
+			overrides: { newGame: catGame(false) },
+			words: smallWords,
+		});
+		vi.advanceTimersByTime(1000);
+		room.move("guest-Ann", 1, { type: "play", path: down(0, 0, 3) });
+		vi.advanceTimersByTime(4000);
+		room.move("guest-Cy", 1, { type: "play", path: down(0, 0, 3) });
+		vi.advanceTimersByTime(ROUND_MS - 5000);
+		expect(seatNamed(host, "Bob")?.out).toBe("cut");
+		vi.advanceTimersByTime(ROUND_BREAK_MS + ROUND_MS);
+		expect(seatNamed(host, "Ann")?.score).toBe(seatNamed(host, "Cy")?.score);
+		expect(seatNamed(host, "Cy")?.out).toBe("cut");
+		expect(host.room.result?.winnerSeatId).toBe(seatNamed(host, "Ann")?.seatId);
+	});
+
+	it("still cuts exactly one when nobody has scored", () => {
+		const { host } = siege(["Ann", "Bob", "Cy"]);
+		vi.advanceTimersByTime(ROUND_MS);
+		expect(outOf(host)).toHaveLength(1);
+	});
+
+	it("knocks out a fallen tower at once while the round carries on", () => {
+		const { room, host } = siege(["Ann", "Bob", "Cy"], {
+			overrides: { newGame: catGame(true) },
+			words: smallWords,
+		});
+		room.move("guest-Ann", 1, { type: "play", path: down(0, 0, 3) });
+		expect(seatNamed(host, "Ann")).toMatchObject({ out: "tower", outRound: 1 });
+		expect(host.room.phase).toBe("playing");
+		vi.advanceTimersByTime(ROUND_MS);
+		expect(room.phase).toBe("finished");
+		expect(host.room.result?.reason).toBe("last-standing");
+		expect(host.room.result?.standings.at(-1)?.name).toBe("Ann");
+	});
+
+	it("ignores moves during the break between rounds", () => {
+		const { room, players } = siege(["Ann", "Bob", "Cy"]);
+		vi.advanceTimersByTime(ROUND_MS);
+		const survivor = players.findIndex((p) => {
+			const me = p.room.seats.find((s) => s.seatId === p.room.you);
+			return me?.out === null;
+		});
+		const name = ["Ann", "Bob", "Cy"][survivor];
+		room.move(`guest-${name}`, 5, { type: "shuffle" });
+		expect(players[survivor].board).toMatchObject({
+			seq: 5,
+			ok: false,
+			error: "not-playing",
+		});
+	});
+
+	it("puts out a player who stays disconnected, and carries on", () => {
+		const { room, players, host } = siege(["Ann", "Bob", "Cy"]);
+		room.detach("guest-Cy", players[2]);
+		vi.advanceTimersByTime(RECONNECT_GRACE_MS);
+		expect(seatNamed(host, "Cy")?.out).toBe("left");
+		expect(host.room.phase).toBe("playing");
+	});
+
+	it("names repeated AI rivals apart", () => {
+		const room = makeRoom({}, dictionary, "siege");
+		const ann = new FakeConnection();
+		room.join("guest-ann", "Ann", ann);
+		for (let i = 0; i < 4; i++) room.addBot("guest-ann", "medium");
+		expect(ann.room.seats.slice(1).map((s) => s.name)).toEqual([
+			"Adept Elowen",
+			"Adept Elowen II",
+			"Adept Elowen III",
+			"Adept Elowen IV",
+		]);
+	});
 });
