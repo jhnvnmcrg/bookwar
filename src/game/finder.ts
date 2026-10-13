@@ -2,7 +2,7 @@ import { CELL_COUNT, MIN_WORD_LETTERS } from "./config";
 import { NEIGHBORS } from "./hex";
 import { scoreWord } from "./scoring";
 import { crystalTierFor } from "./specials";
-import type { Board, CrystalTier, Stone, WordList } from "./types";
+import type { Board, CrystalTier, Letter, Stone, WordList } from "./types";
 
 export interface Candidate {
 	readonly word: string;
@@ -63,4 +63,63 @@ export function findWords(
 	return [...best.values()].sort(
 		(a, b) => b.score - a.score || (a.word < b.word ? -1 : 1),
 	);
+}
+
+/** Search steps findPath may spend before giving up (protects against huge letter runs). */
+const PATH_SEARCH_BUDGET = 50_000;
+
+/**
+ * A path of touching stones spelling `letters`, one entry per stone ("qu" is one entry), or
+ * null. Keeps as much of `prefer` as still matches, so typing extends the current selection
+ * instead of jumping elsewhere on the board.
+ */
+export function findPath(
+	board: Board,
+	letters: readonly Letter[],
+	prefer: readonly number[] = [],
+): number[] | null {
+	let keep = 0;
+	while (
+		keep < prefer.length &&
+		keep < letters.length &&
+		board[prefer[keep]]?.letter === letters[keep]
+	) {
+		keep++;
+	}
+	const budget = { steps: PATH_SEARCH_BUDGET };
+	for (let kept = keep; kept >= 0; kept--) {
+		const path = extendPath(board, letters, prefer.slice(0, kept), budget);
+		if (path) return path;
+		if (budget.steps <= 0) return null;
+	}
+	return null;
+}
+
+function extendPath(
+	board: Board,
+	letters: readonly Letter[],
+	start: readonly number[],
+	budget: { steps: number },
+): number[] | null {
+	const used = new Uint8Array(CELL_COUNT);
+	for (const index of start) used[index] = 1;
+	const path = [...start];
+	const everyCell = Array.from({ length: CELL_COUNT }, (_, index) => index);
+
+	const visit = (from: number | undefined): boolean => {
+		if (path.length === letters.length) return true;
+		if (--budget.steps <= 0) return false;
+		const want = letters[path.length];
+		for (const index of from === undefined ? everyCell : NEIGHBORS[from]) {
+			if (used[index] || board[index]?.letter !== want) continue;
+			used[index] = 1;
+			path.push(index);
+			if (visit(index)) return true;
+			used[index] = 0;
+			path.pop();
+		}
+		return false;
+	};
+
+	return visit(path.at(-1)) ? path : null;
 }

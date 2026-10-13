@@ -1,7 +1,7 @@
 export * from "./config";
-export { type Candidate, findWords } from "./finder";
+export { type Candidate, findPath, findWords } from "./finder";
 export { areAdjacent, colOf, NEIGHBORS, rowOf, toIndex } from "./hex";
-export { rankFor, scoreForLevel } from "./levels";
+export { levelForScore, prophecyBonus, rankFor, scoreForLevel } from "./levels";
 export { checkPath } from "./path";
 export { createGame, type NewGameOptions, reduce } from "./reducer";
 export { scoreWord, type WordScore } from "./scoring";

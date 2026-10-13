@@ -23,6 +23,7 @@
     "build:dictionary": "tsx scripts/build-dictionary.ts"
   },
   "dependencies": {
+    "@gsap/react": "2.1.2",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/ai": "0.68.0",
     "@tanstack/ai-gemini": "0.37.2",
