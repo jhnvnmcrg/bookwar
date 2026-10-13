@@ -22,6 +22,8 @@ describe("player names", () => {
 			"Nox the 2nd",
 			"Hancock",
 			"Dickens",
+			"Therapist",
+			"Nazir",
 			"O'Brien",
 			"x_y-z",
 		]) {

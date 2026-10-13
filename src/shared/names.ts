@@ -6,7 +6,8 @@ export const NAME_MAX = 16;
 
 /**
  * Roots that are never acceptable anywhere inside a name, even glued to other letters. Only
- * roots that don't hide inside ordinary names (so not "cock", which is in "Hancock").
+ * roots that rarely hide inside ordinary names: not "cock" (Hancock), "rapist" (Therapist) or
+ * "nazi" (Nazir); those are still blocked as whole words by the blocklist.
  */
 const BLOCKED_ROOTS = [
 	"fuck",
@@ -17,11 +18,9 @@ const BLOCKED_ROOTS = [
 	"bitch",
 	"whore",
 	"slut",
-	"rapist",
 	"pussy",
 	"penis",
 	"vagina",
-	"nazi",
 	"hitler",
 ];
 

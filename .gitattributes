@@ -1,2 +1,4 @@
-# The dictionary is parsed line by line; keep it LF everywhere.
+# Check text files out with LF on every OS: Biome formats with LF, and the dictionary is
+# parsed line by line.
+* text=auto eol=lf
 *.txt text eol=lf

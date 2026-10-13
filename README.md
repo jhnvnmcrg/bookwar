@@ -4,8 +4,8 @@ A spellbook word duel for the browser. Wizards spell words on a board of hexagon
 break curse runes before they sink to the bottom and topple their tower, and forge mana
 crystals from long words.
 
-Planned modes: **Solo** (Classic and Action), **Siege** (2–5 player elimination) and **Duel**
-(1v1, timed), with AI opponents.
+Modes: **Solo** (Classic and Action) and **Duel** (1v1, timed, against a friend or a built-in
+AI rival). **Siege** (2–5 player elimination) is planned.
 
 Built with TanStack Start (React 19), Vite, Nitro, Tailwind CSS, shadcn/ui and Drizzle on Neon
 Postgres.
@@ -17,7 +17,7 @@ npm install
 npm run dev        # http://localhost:3000
 ```
 
-`.env.local` holds `DATABASE_URL`, `GEMINI_API_KEY` and `NEON_AUTH_BASE_URL`. If
+`.env.local` holds `DATABASE_URL` and `NEON_AUTH_BASE_URL`. If
 `DATABASE_URL` is missing, `npm run dev` creates a temporary Neon database (it expires after
 72 hours unless you claim it).
 
