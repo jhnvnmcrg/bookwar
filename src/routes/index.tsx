@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { AccountLink } from "#/components/account/AccountLink";
 import { Nox } from "#/components/brand/Nox";
 import { TitleStones } from "#/components/brand/TitleStones";
 import { SOLO_MODE_LIST, SOLO_MODES } from "#/components/game/modes";
@@ -53,9 +54,23 @@ function Title() {
 	const progress = useProgress();
 
 	return (
-		<main className="mx-auto flex min-h-dvh max-w-2xl flex-col px-4 pt-10 pb-12 sm:pt-16">
+		<main className="mx-auto flex min-h-dvh max-w-2xl flex-col px-4 pt-4 pb-12">
+			<nav
+				aria-label="Your account and the leaderboard"
+				className="flex min-h-6 justify-end gap-5"
+			>
+				<Link
+					to="/leaderboard"
+					className="text-gold-bright underline-offset-4 hover:underline"
+				>
+					Leaderboard
+				</Link>
+				<AccountLink />
+			</nav>
 			<h1 className="sr-only">Bookwar</h1>
-			<TitleStones />
+			<div className="mt-2 sm:mt-6">
+				<TitleStones />
+			</div>
 			<p className="mx-auto mt-6 max-w-md text-center text-lg text-vellum">
 				Spell words on rune stones. Break curse runes before they sink to the
 				bottom and topple your tower.
@@ -121,7 +136,7 @@ function Title() {
 					to="/scores"
 					className="text-gold-bright underline-offset-4 hover:underline"
 				>
-					High scores
+					Your high scores
 				</Link>
 			</p>
 

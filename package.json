@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@gsap/react": "2.1.2",
+    "@neondatabase/auth": "0.5.0-beta",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/react-devtools": "0.10.13",
     "@tanstack/react-query": "5.104.2",
@@ -37,6 +38,7 @@
     "drizzle-kit": "^0.31.9",
     "drizzle-orm": "^0.45.1",
     "gsap": "^3.15.0",
+    "jose": "6.2.5",
     "lucide-react": "^0.577.0",
     "nitro": "3.0.260610-beta",
     "pg": "^8.16.3",

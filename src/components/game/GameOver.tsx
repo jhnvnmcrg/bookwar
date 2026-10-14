@@ -2,7 +2,10 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { Button } from "#/components/ui/button";
 import { type GameState, rankFor } from "#/game";
+import type { LeaderboardStatus } from "#/hooks/useAccount";
+import { ordinal } from "#/lib/ordinal";
 import { Nox } from "../brand/Nox";
+import { SOLO_MODES } from "./modes";
 
 const format = (value: number) => value.toLocaleString("en-US");
 
@@ -17,6 +20,62 @@ const ENDINGS = {
 	},
 } as const;
 
+const LINK = "text-gold-bright underline-offset-4 hover:underline";
+
+/** What happened to this game on the leaderboard. */
+function LeaderboardLine({
+	status,
+	mode,
+}: {
+	status: LeaderboardStatus;
+	mode: GameState["mode"];
+}) {
+	const name = SOLO_MODES[mode].name;
+	const line = "mt-2 text-center text-sm";
+	switch (status.status) {
+		case "none":
+			return null;
+		case "guest":
+			return (
+				<p className={`${line} text-vellum-dim`}>
+					<Link to="/account" className={LINK}>
+						Sign in
+					</Link>{" "}
+					to put your games on the leaderboard.
+				</p>
+			);
+		case "unchecked":
+			return (
+				<p className={`${line} text-vellum-dim`}>
+					This game began before scores were checked, so it stays off the
+					leaderboard.
+				</p>
+			);
+		case "saving":
+			return (
+				<p className={`${line} text-vellum-dim`} aria-live="polite">
+					Checking your game for the leaderboard…
+				</p>
+			);
+		case "saved":
+			return (
+				<p className={`${line} text-verdigris`} aria-live="polite">
+					Checked. You're {ordinal(status.place)} on the{" "}
+					<Link to="/leaderboard" search={{ board: mode }} className={LINK}>
+						{name} leaderboard
+					</Link>
+					.
+				</p>
+			);
+		case "failed":
+			return (
+				<p className={`${line} text-rubric`} aria-live="polite">
+					Not added to the leaderboard. {status.message}
+				</p>
+			);
+	}
+}
+
 function placeText(place: number | null): string {
 	if (place === 1) return "Your best score yet!";
 	if (place !== null) return `Number ${place} on your high scores.`;
@@ -26,11 +85,13 @@ function placeText(place: number | null): string {
 export function GameOver({
 	game,
 	place,
+	leaderboard,
 	onPlayAgain,
 }: {
 	game: GameState;
 	/** Place on the local high-score list, or null if it didn't make the list. */
 	place: number | null;
+	leaderboard: LeaderboardStatus;
 	onPlayAgain: () => void;
 }) {
 	const playAgain = useRef<HTMLButtonElement>(null);
@@ -63,6 +124,7 @@ export function GameOver({
 				>
 					{placeText(place)}
 				</p>
+				<LeaderboardLine status={leaderboard} mode={game.mode} />
 				<dl className="mt-5 text-sm">
 					<div className="flex justify-between border-t border-gold/20 py-2">
 						<dt className="text-vellum-dim">Rank</dt>

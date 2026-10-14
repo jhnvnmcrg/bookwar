@@ -10,5 +10,7 @@ export default defineConfig({
   out: './drizzle',
   schema: './src/db/schema.ts',
   dialect: 'postgresql',
+  // Only our tables: Neon Auth keeps its users and sessions in the neon_auth schema.
+  schemaFilter: ['public'],
   dbCredentials: { url },
 })

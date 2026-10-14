@@ -5,7 +5,8 @@ import { MODE_NAMES, secondsLabel } from "#/components/match/modes";
 import { NameForm } from "#/components/match/NameForm";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
-import { loadProfile, saveNickname } from "#/lib/profile";
+import { useProfile } from "#/hooks/useProfile";
+import { rename } from "#/lib/account";
 import {
 	BOT_DIFFICULTIES,
 	type BotDifficulty,
@@ -68,8 +69,10 @@ function Play() {
 	const search = Route.useSearch();
 	const navigate = useNavigate();
 	const codeId = useId();
-	const [profile, setProfile] = useState(loadProfile);
-	const [editingName, setEditingName] = useState(profile.nickname === "");
+	const [profile, setProfile] = useProfile();
+	const [changingName, setChangingName] = useState(false);
+	// No name yet: ask for one first (a signed-in player's arrives with the account sync).
+	const editingName = changingName || profile.nickname === "";
 	const [mode, setModeState] = useState<MatchMode>(search.mode ?? "duel");
 	const [seconds, setSeconds] = useState(
 		DEFAULT_SECONDS[search.mode ?? "duel"],
@@ -102,8 +105,8 @@ function Play() {
 					<NameForm
 						initial={profile.nickname}
 						onSave={(nickname) => {
-							setProfile(saveNickname(nickname));
-							setEditingName(false);
+							setProfile(rename(nickname));
+							setChangingName(false);
 						}}
 					/>
 				) : (
@@ -115,7 +118,7 @@ function Play() {
 						<Button
 							variant="link"
 							className="px-1"
-							onClick={() => setEditingName(true)}
+							onClick={() => setChangingName(true)}
 						>
 							Change
 						</Button>

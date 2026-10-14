@@ -10,6 +10,8 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AccountRouteImport } from './routes/account'
+import { Route as LeaderboardRouteImport } from './routes/leaderboard'
 import { Route as PlayRouteImport } from './routes/play'
 import { Route as ScoresRouteImport } from './routes/scores'
 import { Route as QuickModeRouteImport } from './routes/quick.$mode'
@@ -19,6 +21,16 @@ import { Route as SoloModeRouteImport } from './routes/solo.$mode'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountRoute = AccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LeaderboardRoute = LeaderboardRouteImport.update({
+  id: '/leaderboard',
+  path: '/leaderboard',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PlayRoute = PlayRouteImport.update({
@@ -49,6 +61,8 @@ const SoloModeRoute = SoloModeRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/leaderboard': typeof LeaderboardRoute
   '/play': typeof PlayRoute
   '/scores': typeof ScoresRoute
   '/quick/$mode': typeof QuickModeRoute
@@ -57,6 +71,8 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/leaderboard': typeof LeaderboardRoute
   '/play': typeof PlayRoute
   '/scores': typeof ScoresRoute
   '/quick/$mode': typeof QuickModeRoute
@@ -66,6 +82,8 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/leaderboard': typeof LeaderboardRoute
   '/play': typeof PlayRoute
   '/scores': typeof ScoresRoute
   '/quick/$mode': typeof QuickModeRoute
@@ -75,12 +93,29 @@ export interface FileRoutesById {
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/play' | '/scores' | '/quick/$mode' | '/room/$code' | '/solo/$mode'
+    | '/'
+    | '/account'
+    | '/leaderboard'
+    | '/play'
+    | '/scores'
+    | '/quick/$mode'
+    | '/room/$code'
+    | '/solo/$mode'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/play' | '/scores' | '/quick/$mode' | '/room/$code' | '/solo/$mode'
+  to:
+    | '/'
+    | '/account'
+    | '/leaderboard'
+    | '/play'
+    | '/scores'
+    | '/quick/$mode'
+    | '/room/$code'
+    | '/solo/$mode'
   id:
     | '__root__'
     | '/'
+    | '/account'
+    | '/leaderboard'
     | '/play'
     | '/scores'
     | '/quick/$mode'
@@ -90,6 +125,8 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AccountRoute: typeof AccountRoute
+  LeaderboardRoute: typeof LeaderboardRoute
   PlayRoute: typeof PlayRoute
   ScoresRoute: typeof ScoresRoute
   QuickModeRoute: typeof QuickModeRoute
@@ -104,6 +141,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/account': {
+      id: '/account'
+      path: '/account'
+      fullPath: '/account'
+      preLoaderRoute: typeof AccountRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/leaderboard': {
+      id: '/leaderboard'
+      path: '/leaderboard'
+      fullPath: '/leaderboard'
+      preLoaderRoute: typeof LeaderboardRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/play': {
@@ -146,6 +197,8 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AccountRoute: AccountRoute,
+  LeaderboardRoute: LeaderboardRoute,
   PlayRoute: PlayRoute,
   ScoresRoute: ScoresRoute,
   QuickModeRoute: QuickModeRoute,

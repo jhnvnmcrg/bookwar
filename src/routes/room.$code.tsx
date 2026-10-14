@@ -27,7 +27,9 @@ import { type Board, CELL_COUNT } from "#/game";
 import type { Dictionary } from "#/game/dictionary";
 import { useDictionary } from "#/hooks/useDictionary";
 import { type NewRoom, useMatch } from "#/hooks/useMatch";
-import { loadProfile, type Profile, saveNickname } from "#/lib/profile";
+import { useProfile } from "#/hooks/useProfile";
+import { rename } from "#/lib/account";
+import type { Profile } from "#/lib/profile";
 import {
 	BOT_DIFFICULTIES,
 	DEFAULT_SECONDS,
@@ -101,7 +103,7 @@ function RoomPage() {
 	const search = Route.useSearch();
 	const navigate = useNavigate();
 	const words = useDictionary();
-	const [profile, setProfile] = useState(loadProfile);
+	const [profile, setProfile] = useProfile();
 	const [create] = useState<NewRoom | null>(() =>
 		code === "new" ? newRoomFrom(search) : null,
 	);
@@ -118,7 +120,7 @@ function RoomPage() {
 				<NameForm
 					initial=""
 					submitLabel="Join"
-					onSave={(name) => setProfile(saveNickname(name))}
+					onSave={(name) => setProfile(rename(name))}
 				/>
 			</main>
 		);

@@ -11,6 +11,14 @@ export {
 export { dropInterval } from "./modes/action";
 export { checkPath } from "./path";
 export { createGame, type NewGameOptions, reduce } from "./reducer";
+export {
+	decodeMove,
+	encodeMove,
+	MAX_MOVES,
+	type MoveRecord,
+	type ReplayResult,
+	replayGame,
+} from "./replay";
 export { GameStateSchema, parseGameState } from "./schema";
 export { scoreWord, type WordScore } from "./scoring";
 export { crystalSpec } from "./specials";

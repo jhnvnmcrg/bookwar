@@ -6,12 +6,22 @@ import {
 	type NoxLine,
 	openingLine,
 } from "#/components/game/nox-lines";
-import { dropInterval, type GameEvent, type GameState, reduce } from "#/game";
+import {
+	dropInterval,
+	encodeMove,
+	type GameAction,
+	type GameEvent,
+	type GameState,
+	type MoveRecord,
+	reduce,
+} from "#/game";
 import type { Dictionary } from "#/game/dictionary";
 import {
 	clearSave,
 	recordScore,
+	type ScoreEntry,
 	saveGame,
+	saveMoves,
 	scoreEntryFor,
 } from "#/lib/guest-storage";
 import { useMoveFeedback } from "./useMoveFeedback";
@@ -33,14 +43,28 @@ export interface DropClock {
 export function useSoloGame(
 	initial: GameState,
 	dictionary: Dictionary,
-	/** Continued Action games open paused, so stones don't fall before the player is ready. */
-	{ startPaused = false }: { startPaused?: boolean } = {},
+	{
+		startPaused = false,
+		moves: initialMoves = [],
+	}: {
+		/** Continued Action games open paused, so stones don't fall before the player is ready. */
+		startPaused?: boolean;
+		/** The moves that led to `initial`; null when they weren't logged (an older save). */
+		moves?: readonly MoveRecord[] | null;
+	} = {},
 ) {
 	const [game, setGameState] = useState(initial);
 	/** Handlers read the game from here so a move never applies to a stale state. */
 	const gameRef = useRef(initial);
+	/** Every move so far, so the finished game can be replayed to check its score. */
+	const movesRef = useRef<MoveRecord[] | null>(
+		initialMoves ? [...initialMoves] : null,
+	);
+	/** The high-score entry once the game is over. */
+	const [finished, setFinished] = useState<ScoreEntry | null>(null);
 	const [casting, setCasting] = useState<readonly number[] | null>(null);
 	const pendingCast = useRef<{
+		action: GameAction;
 		state: GameState;
 		events: readonly GameEvent[];
 	} | null>(null);
@@ -76,15 +100,20 @@ export function useSoloGame(
 			}),
 	});
 
-	/** Applies a new state: saves it, or records the score when the game just ended. */
-	function commit(next: GameState) {
+	/** Applies a move's result: saves it, or records the score when the game just ended. */
+	function commit(next: GameState, action: GameAction) {
 		gameRef.current = next;
 		setGameState(next);
+		const moves = movesRef.current;
+		moves?.push(encodeMove(action));
 		if (next.status === "playing") {
 			saveGame(next);
+			if (moves) saveMoves(next.mode, next.seed, moves);
 		} else {
 			clearSave(next.mode);
-			setPlace(recordScore(next.mode, scoreEntryFor(next, new Date())));
+			const entry = scoreEntryFor(next, new Date(), moves ?? undefined);
+			setPlace(recordScore(next.mode, entry));
+			setFinished(entry);
 		}
 	}
 
@@ -95,14 +124,19 @@ export function useSoloGame(
 
 	/** Checks the word; if it's valid, the board plays the cast animation first. */
 	function cast(path: readonly number[], fromDrag: boolean) {
-		const result = reduce(gameRef.current, { type: "play", path }, dictionary);
+		const action: GameAction = { type: "play", path };
+		const result = reduce(gameRef.current, action, dictionary);
 		if (!result.ok) {
 			words.shake();
 			setNox(lineForRejection(result.error, words.wordOf(path)));
 			if (fromDrag) words.clear();
 			return;
 		}
-		pendingCast.current = { state: result.state, events: result.events };
+		pendingCast.current = {
+			action,
+			state: result.state,
+			events: result.events,
+		};
 		setCasting(path);
 	}
 
@@ -112,16 +146,17 @@ export function useSoloGame(
 		pendingCast.current = null;
 		setCasting(null);
 		if (!pending) return;
-		commit(pending.state);
+		commit(pending.state, pending.action);
 		words.clear();
 		announce(pending.events, pending.state);
 	}
 
 	function shuffle() {
 		if (locked) return;
-		const result = reduce(gameRef.current, { type: "shuffle" }, dictionary);
+		const action: GameAction = { type: "shuffle" };
+		const result = reduce(gameRef.current, action, dictionary);
 		if (!result.ok) return;
-		commit(result.state);
+		commit(result.state, action);
 		words.clear();
 		setShuffleKey((key) => key + 1);
 		announce(result.events, result.state);
@@ -131,10 +166,11 @@ export function useSoloGame(
 
 	/** One clock tick: drop a stone. Returns false once the game is over. */
 	const dropNow = useEffectEvent((): boolean => {
-		const result = reduce(gameRef.current, { type: "tick" }, dictionary);
+		const action: GameAction = { type: "tick" };
+		const result = reduce(gameRef.current, action, dictionary);
 		if (!result.ok) return false;
 		const next = result.state;
-		commit(next);
+		commit(next, action);
 		const duration = dropInterval(next.level);
 		nextDropAt.current = Date.now() + duration;
 		setDropClock((clock) => ({ key: clock.key + 1, durationMs: duration }));
@@ -200,7 +236,10 @@ export function useSoloGame(
 
 	// Save the starting state too, so leaving before the first move still offers Continue.
 	const saveInitial = useEffectEvent(() => {
-		if (gameRef.current.status === "playing") saveGame(gameRef.current);
+		const state = gameRef.current;
+		if (state.status !== "playing") return;
+		saveGame(state);
+		if (movesRef.current) saveMoves(state.mode, state.seed, movesRef.current);
 	});
 	useEffect(() => saveInitial(), []);
 
@@ -215,6 +254,7 @@ export function useSoloGame(
 		paused,
 		dropClock,
 		place,
+		finished,
 		rejectKey: words.rejectKey,
 		shuffleKey,
 		nox,

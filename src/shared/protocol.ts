@@ -40,7 +40,8 @@ export const ROUND_BREAK_MS = 5000;
 export const QUICK_WAIT_MS = 30_000;
 /** How long a disconnected player keeps their seat. */
 export const RECONNECT_GRACE_MS = 20_000;
-export const MAX_MESSAGE_BYTES = 4096;
+/** Biggest message a client may send; a hello carrying a login token is the largest. */
+export const MAX_MESSAGE_BYTES = 8192;
 
 export const BOT_DIFFICULTIES = ["easy", "medium", "hard"] as const;
 export type BotDifficulty = (typeof BOT_DIFFICULTIES)[number];
@@ -55,6 +56,8 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
 		v: z.literal(PROTOCOL_VERSION),
 		guestId: z.string().min(16).max(64),
 		nickname: z.string().max(40),
+		/** Signed-in players: their login token, so finished matches go in their history. */
+		token: z.string().max(6000).optional(),
 	}),
 	z.object({
 		type: z.literal("createRoom"),

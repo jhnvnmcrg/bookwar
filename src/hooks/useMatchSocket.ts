@@ -1,4 +1,5 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { accessToken } from "#/lib/auth-client";
 import type { Profile } from "#/lib/profile";
 import {
 	type ClientMessage,
@@ -31,8 +32,9 @@ function devHook(): DevHook {
 }
 
 /**
- * The game-server connection: says hello with the player's profile, reconnects with backoff
- * when the connection drops, and keeps an estimate of the server's clock for match timers.
+ * The game-server connection: says hello with the player's profile (and login token, when
+ * signed in, so finished matches are kept), reconnects with backoff when the connection
+ * drops, and keeps an estimate of the server's clock for match timers.
  */
 export function useMatchSocket(
 	profile: Profile,
@@ -68,11 +70,12 @@ export function useMatchSocket(
 	});
 
 	const hello = useEffectEvent(
-		(): ClientMessage => ({
+		(token: string | null): ClientMessage => ({
 			type: "hello",
 			v: PROTOCOL_VERSION,
 			guestId: profile.guestId,
 			nickname: profile.nickname,
+			...(token ? { token } : {}),
 		}),
 	);
 
@@ -100,7 +103,10 @@ export function useMatchSocket(
 					if (socket.readyState === WebSocket.OPEN)
 						socket.send(JSON.stringify({ type: "ping", t: Date.now() }));
 				};
-				socket.send(JSON.stringify(hello()));
+				void accessToken().then((token) => {
+					if (socket.readyState === WebSocket.OPEN)
+						socket.send(JSON.stringify(hello(token)));
+				});
 				// A few quick pings to settle the clock, then a steady heartbeat.
 				for (const delay of [0, 300, 900])
 					quickPings.push(setTimeout(ping, delay));

@@ -52,6 +52,32 @@ export interface RoomDeps {
 	) => () => void;
 	/** Builds each seat's game at match start (tests swap in prepared boards). */
 	readonly newGame?: (seed: string, seatIndex: number) => GameState;
+	/** A match just ended (for match history). */
+	readonly onFinished?: (summary: MatchSummary) => void;
+}
+
+/** A finished match, seat by seat, for the match history. */
+export interface MatchSummary {
+	readonly code: string;
+	readonly mode: MatchMode;
+	readonly seconds: number;
+	/** Siege rounds played; 1 for a Duel. */
+	readonly rounds: number;
+	readonly reason: EndReason;
+	readonly startedAt: number;
+	readonly endedAt: number;
+	readonly players: readonly {
+		/** Seat order in the room, from 0. */
+		readonly seat: number;
+		readonly guestId: string | null;
+		readonly name: string;
+		readonly bot: BotDifficulty | null;
+		readonly score: number;
+		readonly place: number;
+		readonly won: boolean;
+		readonly out: OutReason | null;
+		readonly outRound: number | null;
+	}[];
 }
 
 export type RoomError = Extract<
@@ -101,6 +127,7 @@ export class Room implements BotHost {
 	private idleTimer: Timer | null = null;
 	private matchSeed = "";
 	private outCount = 0;
+	private startedAt = 0;
 
 	constructor(
 		readonly code: string,
@@ -185,12 +212,19 @@ export class Room implements BotHost {
 		if (this.phase === "countdown") this.cancelCountdown();
 		if (LIVE.includes(this.phase)) {
 			this.knockOut(seat, "left");
-			// The seat stays on the scoreboard while anyone is still watching.
-			if (this.seats.some((s) => s.connection)) return;
+			// The seat stays on the scoreboard. With nobody watching or able to come back, the
+			// match ends here.
+			if (!this.anyoneMayReturn()) this.close();
+			return;
 		}
 		if (this.phase !== "finished" || !this.seats.some((s) => s.connection)) {
 			this.removeSeat(seat);
 		}
+	}
+
+	/** Someone is connected, or disconnected but still within their time to reconnect. */
+	private anyoneMayReturn(): boolean {
+		return this.seats.some((s) => s.connection || s.graceTimer);
 	}
 
 	leave(guestId: string): void {
@@ -204,7 +238,7 @@ export class Room implements BotHost {
 			// Forfeit: the seat stays on the results, but the guest is free to go elsewhere.
 			this.knockOut(seat, "left");
 			this.deps.onSeatGone(guestId, this);
-			if (!this.seats.some((s) => s.connection)) this.close();
+			if (!this.anyoneMayReturn()) this.close();
 			return;
 		}
 		this.removeSeat(seat);
@@ -343,6 +377,7 @@ export class Room implements BotHost {
 		this.outCount = 0;
 		this.cut = null;
 		const start = this.now();
+		this.startedAt = start;
 		const newGame =
 			this.deps.newGame ??
 			((seed: string) => createGame({ mode: "classic", seed }));
@@ -523,10 +558,42 @@ export class Room implements BotHost {
 		this.phaseEndsAt = null;
 		this.broadcastRoom();
 		this.scheduleIdleClose();
+		this.deps.onFinished?.(this.summary(this.result));
+	}
+
+	private summary(result: MatchResult): MatchSummary {
+		return {
+			code: this.code,
+			mode: this.mode,
+			seconds: this.seconds,
+			rounds: Math.max(1, this.round),
+			reason: result.reason,
+			startedAt: this.startedAt,
+			endedAt: this.now(),
+			players: this.seats.map((seat, i) => {
+				const standing = result.standings.find(
+					(entry) => entry.seatId === seat.seatId,
+				);
+				return {
+					seat: i,
+					guestId: seat.guestId,
+					name: seat.name,
+					bot: seat.bot,
+					score: standing?.score ?? 0,
+					place: standing?.place ?? this.seats.length,
+					won: result.winnerSeatId === seat.seatId,
+					out: seat.out,
+					outRound: seat.outRound,
+				};
+			}),
+		};
 	}
 
 	close(): void {
 		if (this.closed) return;
+		// Everyone left mid-match (only AI rivals were still playing): the match ends here, so
+		// it still has a result for the players' history.
+		if (LIVE.includes(this.phase)) this.finish("left");
 		this.closed = true;
 		if (this.phaseTimer) clearTimeout(this.phaseTimer);
 		this.clearIdle();

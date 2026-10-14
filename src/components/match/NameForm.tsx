@@ -56,7 +56,7 @@ export function NameForm({
 				>
 					{touched && problem
 						? PROBLEMS[problem]
-						: "Rivals see this name during a duel."}
+						: "Rivals see this name in duels and sieges."}
 				</p>
 			</div>
 			<Button type="submit" size="lg" className="mb-7 font-bold">

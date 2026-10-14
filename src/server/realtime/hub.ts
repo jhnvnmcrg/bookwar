@@ -15,7 +15,13 @@ import {
 	type ServerMessage,
 } from "../../shared/protocol";
 import { startBot } from "../bot/bot";
-import { type Connection, Room, type RoomError } from "./room";
+import {
+	type Connection,
+	type MatchSummary,
+	Room,
+	type RoomDeps,
+	type RoomError,
+} from "./room";
 
 /** No look-alike characters (I/1, O/0, L). */
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -65,12 +71,26 @@ interface Client {
 	refilledAt: number;
 }
 
+/** A finished match with the account behind each signed-in seat. */
+export interface MatchRecord extends Omit<MatchSummary, "players"> {
+	readonly players: readonly (Omit<
+		MatchSummary["players"][number],
+		"guestId"
+	> & {
+		readonly userId: string | null;
+	})[];
+}
+
 export interface HubDeps {
 	readonly loadWords: () => Promise<WordList>;
 	readonly randomId?: () => string;
 	readonly now?: () => number;
 	/** Randomness for bot decisions (tests pass a seeded one). */
 	readonly botRandom?: () => number;
+	/** The account id a login token belongs to, or null for a bad token. */
+	readonly verifyToken?: (token: string) => Promise<string | null>;
+	/** Saves a finished match that had at least one signed-in player. */
+	readonly recordMatch?: (record: MatchRecord) => Promise<void>;
 }
 
 export class Hub {
@@ -78,6 +98,8 @@ export class Hub {
 	private readonly clients = new Map<string, Client>();
 	/** Which room each guest has a seat in. */
 	private readonly guestRooms = new Map<string, string>();
+	/** The account of each signed-in guest, from the token in their hello. */
+	private readonly accounts = new Map<string, string>();
 	private words: Promise<WordList> | null = null;
 	/** The word list once loaded, for work that can't wait (timers). */
 	private loadedWords: WordList | null = null;
@@ -127,6 +149,51 @@ export class Hub {
 		if (!client.guestId) return;
 		this.roomOf(client.guestId)?.detach(client.guestId, client.connection);
 		this.leaveQueue(client.guestId, client.connection);
+		this.forgetAccount(client.guestId);
+	}
+
+	/** Records who a guest is signed in as. The check runs alongside the hello, not before it. */
+	private identify(guestId: string, token: string | undefined): void {
+		const verify = this.deps.verifyToken;
+		if (!token || !verify) {
+			this.accounts.delete(guestId);
+			return;
+		}
+		void verify(token).then(
+			(userId) => {
+				if (userId) this.accounts.set(guestId, userId);
+				else this.accounts.delete(guestId);
+			},
+			() => this.accounts.delete(guestId),
+		);
+	}
+
+	/** Drops a guest's account once they're neither connected nor seated. */
+	private forgetAccount(guestId: string): void {
+		if (this.guestRooms.has(guestId)) return;
+		for (const client of this.clients.values())
+			if (client.guestId === guestId) return;
+		this.accounts.delete(guestId);
+	}
+
+	/** Account id for a guest (tests and match history). */
+	accountOf(guestId: string): string | null {
+		return this.accounts.get(guestId) ?? null;
+	}
+
+	private matchFinished(summary: MatchSummary): void {
+		const record: MatchRecord = {
+			...summary,
+			players: summary.players.map(({ guestId, ...player }) => ({
+				...player,
+				userId: guestId ? (this.accounts.get(guestId) ?? null) : null,
+			})),
+		};
+		if (!this.deps.recordMatch) return;
+		if (!record.players.some((player) => player.userId)) return;
+		this.deps.recordMatch(record).catch((error: unknown) => {
+			console.error("[bookwar] couldn't save a finished match", error);
+		});
 	}
 
 	async receive(id: string, text: string): Promise<void> {
@@ -197,6 +264,7 @@ export class Hub {
 			}
 			client.guestId = message.guestId;
 			client.name = name;
+			this.identify(message.guestId, message.token);
 			client.connection.send({ type: "welcome", serverNow: this.now() });
 			this.roomOf(message.guestId)?.attach(message.guestId, client.connection);
 			this.reattachQueue(message.guestId, client.connection);
@@ -395,7 +463,7 @@ export class Hub {
 		}
 	}
 
-	private roomDeps(words: WordList) {
+	private roomDeps(words: WordList): RoomDeps {
 		return {
 			words,
 			randomId: this.deps.randomId ?? randomUUID,
@@ -403,6 +471,7 @@ export class Hub {
 			onSeatGone: (guestId: string, room: Room) => {
 				if (this.guestRooms.get(guestId) === room.code)
 					this.guestRooms.delete(guestId);
+				this.forgetAccount(guestId);
 			},
 			onClose: (room: Room) => {
 				this.rooms.delete(room.code);
@@ -412,6 +481,7 @@ export class Hub {
 				seatId: string,
 				difficulty: Parameters<typeof startBot>[2],
 			) => startBot(room, seatId, difficulty, words, this.deps.botRandom),
+			onFinished: (summary) => this.matchFinished(summary),
 		};
 	}
 }

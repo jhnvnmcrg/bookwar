@@ -5,7 +5,7 @@ import {
 	RECONNECT_GRACE_MS,
 	type ServerMessage,
 } from "../../shared/protocol";
-import { Hub } from "./hub";
+import { Hub, type MatchRecord } from "./hub";
 
 class Socket {
 	readonly messages: ServerMessage[] = [];
@@ -62,7 +62,7 @@ describe("Hub", () => {
 		expect(socket.last("error")?.code).toBe("bad-message");
 		await socket.send({ type: "hello", v: 99, guestId: ANN, nickname: "Ann" });
 		expect(socket.last("error")?.code).toBe("bad-message");
-		await socket.send("x".repeat(5000));
+		await socket.send("x".repeat(9000));
 		expect(socket.last("error")?.code).toBe("bad-message");
 	});
 
@@ -222,5 +222,151 @@ describe("quick match", () => {
 		});
 		expect(a.last("room")?.room.seats).toHaveLength(5);
 		expect(a.last("room")?.room.phase).toBe("countdown");
+	});
+});
+
+describe("signed-in players", () => {
+	let recorded: MatchRecord[];
+	const helloWith = (
+		socket: Socket,
+		guestId: string,
+		name: string,
+		token?: string,
+	) =>
+		socket.send({
+			type: "hello",
+			v: PROTOCOL_VERSION,
+			guestId,
+			nickname: name,
+			token,
+		});
+
+	beforeEach(() => {
+		recorded = [];
+		hub = new Hub({
+			loadWords: loadDictionary,
+			verifyToken: async (token) => (token === "ann-token" ? "user-ann" : null),
+			recordMatch: async (record) => {
+				recorded.push(record);
+			},
+		});
+	});
+
+	it("keeps a finished match with the account behind each signed-in seat", async () => {
+		const ann = new Socket(hub, "s1");
+		const bob = new Socket(hub, "s2");
+		await helloWith(ann, ANN, "Ann", "ann-token");
+		await helloWith(bob, BOB, "Bob", "forged-token");
+		await vi.waitFor(() => expect(hub.accountOf(ANN)).toBe("user-ann"));
+		expect(hub.accountOf(BOB)).toBeNull();
+
+		await ann.send({ type: "createRoom", mode: "duel", seconds: 120 });
+		await bob.send({ type: "joinRoom", code: ann.last("room")?.room.code });
+		await ann.send({ type: "start" });
+		vi.advanceTimersByTime(3000 + 120_000);
+
+		expect(ann.last("room")?.room.phase).toBe("finished");
+		expect(recorded).toHaveLength(1);
+		const [record] = recorded;
+		expect(record).toMatchObject({ mode: "duel", seconds: 120, rounds: 1 });
+		expect(record.reason).toBe("time");
+		expect(record.endedAt - record.startedAt).toBe(120_000);
+		expect(
+			record.players.map(({ seat, userId, name, bot }) => ({
+				seat,
+				userId,
+				name,
+				bot,
+			})),
+		).toEqual([
+			{ seat: 0, userId: "user-ann", name: "Ann", bot: null },
+			{ seat: 1, userId: null, name: "Bob", bot: null },
+		]);
+		// Nobody cast a word, so the duel is a draw.
+		expect(record.players.map(({ place, won }) => ({ place, won }))).toEqual([
+			{ place: 1, won: false },
+			{ place: 1, won: false },
+		]);
+	});
+
+	it("keeps a siege against the AI that the only player walked out of", async () => {
+		const ann = new Socket(hub, "s1");
+		await helloWith(ann, ANN, "Ann", "ann-token");
+		await vi.waitFor(() => expect(hub.accountOf(ANN)).toBe("user-ann"));
+		await ann.send({
+			type: "createRoom",
+			mode: "siege",
+			seconds: 30,
+			ai: { difficulty: "easy", count: 4 },
+		});
+		vi.advanceTimersByTime(3000);
+		await ann.send({ type: "leaveRoom" });
+
+		expect(hub.rooms.size).toBe(0);
+		expect(recorded).toHaveLength(1);
+		const [record] = recorded;
+		expect(record).toMatchObject({ mode: "siege", reason: "left", rounds: 1 });
+		expect(record.players).toHaveLength(5);
+		expect(record.players[0]).toMatchObject({
+			userId: "user-ann",
+			place: 5,
+			won: false,
+			out: "left",
+			outRound: 1,
+		});
+		expect(record.players.filter((player) => player.won)).toHaveLength(1);
+	});
+
+	it("keeps a siege against the AI whose only player never came back", async () => {
+		const ann = new Socket(hub, "s1");
+		await helloWith(ann, ANN, "Ann", "ann-token");
+		await vi.waitFor(() => expect(hub.accountOf(ANN)).toBe("user-ann"));
+		await ann.send({
+			type: "createRoom",
+			mode: "siege",
+			seconds: 60,
+			ai: { difficulty: "easy", count: 2 },
+		});
+		vi.advanceTimersByTime(3000);
+		hub.disconnect("s1");
+		vi.advanceTimersByTime(RECONNECT_GRACE_MS);
+
+		expect(hub.rooms.size).toBe(0);
+		expect(recorded).toHaveLength(1);
+		expect(recorded[0].players[0]).toMatchObject({
+			userId: "user-ann",
+			out: "left",
+			place: 3,
+		});
+	});
+
+	it("doesn't keep matches that no signed-in player was in", async () => {
+		const bob = new Socket(hub, "s1");
+		await helloWith(bob, BOB, "Bob");
+		await bob.send({
+			type: "createRoom",
+			mode: "duel",
+			seconds: 120,
+			ai: { difficulty: "easy", count: 1 },
+		});
+		vi.advanceTimersByTime(3000 + 120_000);
+		expect(bob.last("room")?.room.phase).toBe("finished");
+		expect(recorded).toEqual([]);
+	});
+
+	it("forgets the account after a hello without a token (signed out)", async () => {
+		const ann = new Socket(hub, "s1");
+		await helloWith(ann, ANN, "Ann", "ann-token");
+		await vi.waitFor(() => expect(hub.accountOf(ANN)).toBe("user-ann"));
+		await helloWith(ann, ANN, "Ann");
+		expect(hub.accountOf(ANN)).toBeNull();
+	});
+
+	it("forgets the account when a guest who isn't in a room goes", async () => {
+		const ann = new Socket(hub, "s1");
+		await helloWith(ann, ANN, "Ann", "ann-token");
+		await vi.waitFor(() => expect(hub.accountOf(ANN)).toBe("user-ann"));
+		hub.disconnect("s1");
+		expect(hub.accountOf(ANN)).toBeNull();
 	});
 });

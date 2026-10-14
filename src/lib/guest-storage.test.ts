@@ -2,14 +2,18 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createGame } from "#/game";
 import {
 	clearSave,
+	loadMoves,
 	loadSave,
 	loadScores,
 	MAX_SCORES,
+	markUploaded,
 	recordScore,
 	type ScoreEntry,
 	type StorageLike,
 	saveGame,
+	saveMoves,
 	scoreEntryFor,
+	scoresToUpload,
 } from "./guest-storage";
 
 class MemoryStorage implements StorageLike {
@@ -84,6 +88,23 @@ describe("saved games", () => {
 	});
 });
 
+describe("move logs", () => {
+	it("belong to the saved game with the same seed", () => {
+		saveMoves("classic", "abc", ["s", "0At"], storage);
+		expect(loadMoves("classic", "abc", storage)).toEqual(["s", "0At"]);
+		expect(loadMoves("classic", "other", storage)).toBeNull();
+		expect(loadMoves("action", "abc", storage)).toBeNull();
+	});
+
+	it("are cleared with the save, and corrupt ones are ignored", () => {
+		saveMoves("classic", "abc", ["s"], storage);
+		clearSave("classic", storage);
+		expect(loadMoves("classic", "abc", storage)).toBeNull();
+		storage.setItem("bookwar:v1:moves:classic", '{"seed":"abc","moves":[1]}');
+		expect(loadMoves("classic", "abc", storage)).toBeNull();
+	});
+});
+
 describe("high scores", () => {
 	it("keeps the best scores, highest first, and reports the place", () => {
 		expect(recordScore("classic", entry(500), storage)).toBe(1);
@@ -127,5 +148,41 @@ describe("high scores", () => {
 			playedAt: "2026-01-01T00:00:00.000Z",
 			seed: "f",
 		});
+		expect(
+			scoreEntryFor(game, new Date(Date.UTC(2026, 0, 1)), ["s"]).moves,
+		).toEqual(["s"]);
+	});
+
+	it("keeps the move log with the score", () => {
+		recordScore("classic", { ...entry(100), moves: ["s", "0At"] }, storage);
+		expect(loadScores("classic", storage)[0].moves).toEqual(["s", "0At"]);
+	});
+});
+
+describe("sending scores to an account", () => {
+	it("sends each game once per account", () => {
+		recordScore("classic", entry(300), storage);
+		recordScore("classic", entry(100), storage);
+		recordScore("action", entry(200), storage);
+		const pending = scoresToUpload("u1", ["classic", "action"], storage);
+		expect(pending.map((p) => [p.mode, p.entry.score])).toEqual([
+			["classic", 300],
+			["classic", 100],
+			["action", 200],
+		]);
+		markUploaded(
+			"u1",
+			pending.slice(0, 2).map((p) => ({ mode: p.mode, seed: p.entry.seed })),
+			storage,
+		);
+		expect(
+			scoresToUpload("u1", ["classic", "action"], storage).map(
+				(p) => p.entry.score,
+			),
+		).toEqual([200]);
+		// Another account on the same browser still gets everything.
+		expect(scoresToUpload("u2", ["classic", "action"], storage)).toHaveLength(
+			3,
+		);
 	});
 });

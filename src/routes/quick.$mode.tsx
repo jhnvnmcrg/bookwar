@@ -11,7 +11,9 @@ import { MODE_NAMES } from "#/components/match/modes";
 import { NameForm } from "#/components/match/NameForm";
 import { Button } from "#/components/ui/button";
 import { useMatchSocket } from "#/hooks/useMatchSocket";
-import { loadProfile, type Profile, saveNickname } from "#/lib/profile";
+import { useProfile } from "#/hooks/useProfile";
+import { rename } from "#/lib/account";
+import type { Profile } from "#/lib/profile";
 import {
 	MATCH_MODES,
 	type MatchMode,
@@ -36,7 +38,7 @@ export const Route = createFileRoute("/quick/$mode")({
 
 function QuickPage() {
 	const { mode } = Route.useParams();
-	const [profile, setProfile] = useState(loadProfile);
+	const [profile, setProfile] = useProfile();
 	if (!profile.nickname) {
 		return (
 			<main className="mx-auto max-w-xl px-4 pt-16 pb-12">
@@ -49,7 +51,7 @@ function QuickPage() {
 				<NameForm
 					initial=""
 					submitLabel="Find a match"
-					onSave={(n) => setProfile(saveNickname(n))}
+					onSave={(n) => setProfile(rename(n))}
 				/>
 			</main>
 		);

@@ -20,11 +20,17 @@ import { ScorePanel } from "#/components/game/ScorePanel";
 import { DropTimer, SpaceMeter } from "#/components/game/SpaceMeter";
 import { WordTray } from "#/components/game/WordTray";
 import { Button } from "#/components/ui/button";
-import { createGame, type GameMode, type GameState } from "#/game";
+import {
+	createGame,
+	type GameMode,
+	type GameState,
+	type MoveRecord,
+} from "#/game";
 import type { Dictionary } from "#/game/dictionary";
+import { useLeaderboardEntry } from "#/hooks/useAccount";
 import { useDictionary } from "#/hooks/useDictionary";
 import { useSoloGame } from "#/hooks/useSoloGame";
-import { loadSave } from "#/lib/guest-storage";
+import { loadMoves, loadSave } from "#/lib/guest-storage";
 
 const searchSchema = z.object({
 	/** Start a new game instead of continuing the saved one. */
@@ -55,6 +61,8 @@ const newSeed = () => crypto.randomUUID().slice(0, 8);
 
 interface Start {
 	readonly state: GameState;
+	/** The moves that led to `state`; null for a saved game from before moves were logged. */
+	readonly moves: readonly MoveRecord[] | null;
 	/** True when continuing a saved game. */
 	readonly resumed: boolean;
 }
@@ -65,13 +73,26 @@ function startingGame(
 	search: z.infer<typeof searchSchema>,
 ): Start {
 	if (import.meta.env.DEV && search.seed) {
-		return { state: createGame({ mode, seed: search.seed }), resumed: false };
+		return {
+			state: createGame({ mode, seed: search.seed }),
+			moves: [],
+			resumed: false,
+		};
 	}
 	if (!search.fresh) {
 		const saved = loadSave(mode);
-		if (saved) return { state: saved, resumed: true };
+		if (saved)
+			return {
+				state: saved,
+				moves: loadMoves(mode, saved.seed),
+				resumed: true,
+			};
 	}
-	return { state: createGame({ mode, seed: newSeed() }), resumed: false };
+	return {
+		state: createGame({ mode, seed: newSeed() }),
+		moves: [],
+		resumed: false,
+	};
 }
 
 function SoloPage() {
@@ -114,11 +135,13 @@ function SoloPage() {
 		<SoloGame
 			key={start.state.seed}
 			initial={start.state}
+			moves={start.moves}
 			resumed={start.resumed}
 			dictionary={words.dictionary}
 			onNewGame={() =>
 				setStart({
 					state: createGame({ mode, seed: newSeed() }),
+					moves: [],
 					resumed: false,
 				})
 			}
@@ -136,16 +159,22 @@ function CenteredMessage({ children }: { children: ReactNode }) {
 
 function SoloGame({
 	initial,
+	moves,
 	resumed,
 	dictionary,
 	onNewGame,
 }: {
 	initial: GameState;
+	moves: readonly MoveRecord[] | null;
 	resumed: boolean;
 	dictionary: Dictionary;
 	onNewGame: () => void;
 }) {
-	const solo = useSoloGame(initial, dictionary, { startPaused: resumed });
+	const solo = useSoloGame(initial, dictionary, {
+		startPaused: resumed,
+		moves,
+	});
+	const leaderboard = useLeaderboardEntry(initial.mode, solo.finished);
 	const { game } = solo;
 	const action = game.mode === "action";
 	const over = game.status === "over";
@@ -277,7 +306,12 @@ function SoloGame({
 			</aside>
 
 			{over && (
-				<GameOver game={game} place={solo.place} onPlayAgain={onNewGame} />
+				<GameOver
+					game={game}
+					place={solo.place}
+					leaderboard={leaderboard}
+					onPlayAgain={onNewGame}
+				/>
 			)}
 		</main>
 	);
