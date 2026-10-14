@@ -17,6 +17,7 @@ import { isSoloMode, SOLO_MODES } from "#/components/game/modes";
 import { NoxSays } from "#/components/game/NoxSays";
 import { ProphecyScroll } from "#/components/game/ProphecyScroll";
 import { ScorePanel } from "#/components/game/ScorePanel";
+import { SoundToggle } from "#/components/game/SoundToggle";
 import { DropTimer, SpaceMeter } from "#/components/game/SpaceMeter";
 import { WordTray } from "#/components/game/WordTray";
 import { Button } from "#/components/ui/button";
@@ -30,6 +31,7 @@ import type { Dictionary } from "#/game/dictionary";
 import { useLeaderboardEntry } from "#/hooks/useAccount";
 import { useDictionary } from "#/hooks/useDictionary";
 import { useSoloGame } from "#/hooks/useSoloGame";
+import { prefersReducedMotion } from "#/lib/gsap";
 import { loadMoves, loadSave } from "#/lib/guest-storage";
 
 const searchSchema = z.object({
@@ -178,6 +180,16 @@ function SoloGame({
 	const { game } = solo;
 	const action = game.mode === "action";
 	const over = game.status === "over";
+	// The results wait until the stones have tumbled off the board.
+	const [fallenShown, setFallenShown] = useState(false);
+	useEffect(() => {
+		if (!over) return;
+		const timer = setTimeout(
+			() => setFallenShown(true),
+			prefersReducedMotion() ? 0 : 1400,
+		);
+		return () => clearTimeout(timer);
+	}, [over]);
 
 	return (
 		<main className="mx-auto grid max-w-6xl gap-x-10 gap-y-4 px-4 pt-3 pb-8 lg:grid-cols-[15rem_minmax(0,34rem)_15rem] lg:grid-rows-[auto_auto_1fr] lg:justify-center lg:pt-6">
@@ -207,6 +219,7 @@ function SoloGame({
 								Pause
 							</Button>
 						))}
+					<SoundToggle />
 				</div>
 			</header>
 
@@ -239,6 +252,8 @@ function SoloGame({
 							shuffleKey={solo.shuffleKey}
 							locked={solo.locked}
 							dangerEdge={action ? "top" : "bottom"}
+							glow={solo.glow}
+							fallen={over}
 							onPress={solo.press}
 							onDrag={solo.drag}
 							onRelease={solo.release}
@@ -305,7 +320,7 @@ function SoloGame({
 				</p>
 			</aside>
 
-			{over && (
+			{over && fallenShown && (
 				<GameOver
 					game={game}
 					place={solo.place}

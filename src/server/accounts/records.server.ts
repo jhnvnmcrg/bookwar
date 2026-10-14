@@ -69,6 +69,7 @@ export async function renameProfile(
 			target: profiles.userId,
 			set: { nickname, updatedAt: sql`now()` },
 		});
+	forgetLeaderboard();
 }
 
 // --- Solo scores ---------------------------------------------------------------------------
@@ -134,6 +135,8 @@ async function upsertScore(row: ScoreRow): Promise<void> {
 			},
 			setWhere: sql`excluded.verified > ${highScores.verified} or (excluded.verified = ${highScores.verified} and excluded.score > ${highScores.score})`,
 		});
+	// After the write, so a read in between can't keep the old board.
+	forgetLeaderboard();
 }
 
 /** Where the player's best checked score stands among everyone's best (1 = top). */
@@ -254,6 +257,7 @@ export async function recordMatch(record: MatchRecord): Promise<void> {
 			})),
 		);
 	});
+	forgetLeaderboard();
 }
 
 // --- Reading ---------------------------------------------------------------------------------
@@ -317,7 +321,7 @@ async function topWins(mode: "duel" | "siege"): Promise<WinsRow[]> {
 	return rows.map((row, i) => ({ place: i + 1, ...row }));
 }
 
-export async function leaderboard(): Promise<Leaderboard> {
+async function readLeaderboard(): Promise<Leaderboard> {
 	const [classic, action, duel, siege] = await Promise.all([
 		topScores("classic"),
 		topScores("action"),
@@ -325,6 +329,35 @@ export async function leaderboard(): Promise<Leaderboard> {
 		topWins("siege"),
 	]);
 	return { classic, action, duel, siege };
+}
+
+/** How long the leaderboard is reused before the database is asked again. */
+const LEADERBOARD_TTL_MS = 15_000;
+
+// Shared by both server bundles, so a new score from either one clears it.
+const cache = globalThis as typeof globalThis & {
+	__bookwarLeaderboard?: {
+		readonly at: number;
+		readonly board: Promise<Leaderboard>;
+	};
+};
+
+/** Something on the leaderboard changed: the next request reads it afresh. */
+function forgetLeaderboard(): void {
+	cache.__bookwarLeaderboard = undefined;
+}
+
+/** The leaderboard, read at most every few seconds however many people are looking. */
+export function leaderboard(): Promise<Leaderboard> {
+	const now = Date.now();
+	const cached = cache.__bookwarLeaderboard;
+	if (cached && now - cached.at < LEADERBOARD_TTL_MS) return cached.board;
+	const board = readLeaderboard();
+	cache.__bookwarLeaderboard = { at: now, board };
+	board.catch(() => {
+		if (cache.__bookwarLeaderboard?.board === board) forgetLeaderboard();
+	});
+	return board;
 }
 
 /** Everything the account page shows: the player's scores, record and recent matches. */

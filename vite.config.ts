@@ -16,6 +16,17 @@ const config = defineConfig({
 			features: { websocket: true },
 			routes: { "/api/ws": "./src/server/ws.ts" },
 			rollupConfig: { external: [/^@sentry\//] },
+			routeRules: {
+				// Basic hardening for every response; the host adds HTTPS (and HSTS).
+				"/**": {
+					headers: {
+						"X-Content-Type-Options": "nosniff",
+						"Referrer-Policy": "strict-origin-when-cross-origin",
+						"X-Frame-Options": "DENY",
+						"Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+					},
+				},
+			},
 		}),
 		neon,
 		tailwindcss(),

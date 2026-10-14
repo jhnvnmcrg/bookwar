@@ -7,6 +7,7 @@ import {
 import { type Board, checkPath, type GameEvent } from "#/game";
 import type { Dictionary } from "#/game/dictionary";
 import type { Profile } from "#/lib/profile";
+import { playSound } from "#/lib/sound";
 import {
 	type BotDifficulty,
 	decodeMini,
@@ -28,6 +29,8 @@ const FATAL: readonly ErrorCode[] = [
 	"match-running",
 	"name-not-allowed",
 	"old-version",
+	"server-busy",
+	"too-many-connections",
 ];
 
 /** How long to wait for the server to answer a move before giving up on it. */
@@ -150,6 +153,7 @@ export function useMatch({
 		const next = ++seq.current;
 		pending.current = { seq: next, animated: false, reply: null };
 		socket.send({ type: "play", seq: next, path: [...path] });
+		playSound("cast", words.wordOf(path).length);
 		setCasting(path);
 		setTimeout(() => {
 			if (pending.current?.seq === next) settle();
@@ -243,7 +247,8 @@ export function useMatch({
 				}));
 				return;
 			case "error":
-				if (FATAL.includes(message.code)) setProblem(message);
+				// Before there's a room, any refusal (such as opening rooms too fast) ends the page.
+				if (FATAL.includes(message.code) || !room) setProblem(message);
 				else setNox({ mood: "worried", text: message.message });
 				return;
 			case "left":
@@ -279,6 +284,7 @@ export function useMatch({
 		nox,
 		popups: feedback.popups,
 		banner: feedback.banner,
+		glow: feedback.glow,
 		selection: words.selection,
 		word: words.word,
 		wordStatus: words.status,

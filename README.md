@@ -47,8 +47,7 @@ npm run dev        # http://localhost:3000
 | `npm run build:dictionary -- <enable1.txt>` | Rebuild the word list (see below) |
 
 To run a production build locally: `npm run build`, then
-`node --env-file=.env.local .output/server/index.mjs`. Live games keep their rooms in memory,
-so run one long-lived server process (not serverless functions).
+`node --env-file=.env.local .output/server/index.mjs`.
 
 ## Project layout
 
@@ -79,6 +78,40 @@ so run one long-lived server process (not serverless functions).
 - Neon's shared email service sends password-reset codes during development. Production needs
   custom SMTP set up in the Neon console, and the site's domain added to Neon Auth's trusted
   domains. The Google sign-in uses Neon's shared Google app, which is for development only.
+
+## Deploying
+
+Bookwar runs as **one long-lived Node process**: live matches keep their rooms in memory and
+talk over WebSockets. Use a host that runs a container or Node server (Fly.io, Render, Railway
+and the like), keep it to a single instance, and don't use serverless functions. A deploy
+restarts the process, which ends any matches in progress.
+
+1. **Database.** Point `DATABASE_URL` at the production database and run `npm run db:migrate`
+   (it uses the direct, unpooled URL).
+2. **Neon Auth.** In the Neon console (or with `neon neon-auth domain add https://your.site`),
+   add the site's address to the trusted domains. Set up custom SMTP so reset codes come from
+   your own address, and either add your own Google OAuth app or turn Google sign-in off: the
+   shared ones are for development.
+3. **Build the image.** The browser's auth URL is built into the client:
+
+   ```bash
+   docker build --build-arg VITE_NEON_AUTH_URL=https://…/neondb/auth -t bookwar .
+   ```
+
+4. **Run it** with these environment variables (as host secrets, not in the image):
+   `DATABASE_URL_POOLED` (or `DATABASE_URL`) and `NEON_AUTH_BASE_URL`. The image sets
+   `PORT=3000` and `TRUST_PROXY=1`, so per-address limits use the `X-Forwarded-For` header
+   from the host's proxy; set `TRUST_PROXY=0` if nothing sits in front of the server.
+
+   ```bash
+   docker run -p 3000:3000 --env-file .env.production bookwar
+   ```
+
+5. **Health check:** `GET /api/health` answers `{"ok":true}`.
+
+The server also caps how much one client can take: 16 sockets per address, 5,000 in all,
+2,000 open rooms and 12 new rooms per guest per minute (`src/server/realtime/hub.ts`), plus
+40 checked games per player per minute.
 
 ## Word list
 

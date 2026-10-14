@@ -15,6 +15,7 @@ import {
 	type ServerMessage,
 } from "../../shared/protocol";
 import { startBot } from "../bot/bot";
+import { RateLimiter } from "../rate-limit.server";
 import {
 	type Connection,
 	type MatchSummary,
@@ -31,6 +32,25 @@ const CODE_LENGTH = 5;
 const BURST = 30;
 const REFILL_PER_SEC = 15;
 
+/** Caps that keep one busy (or hostile) client from taking the whole server down. */
+export interface HubLimits {
+	/** Open sockets for the whole server. */
+	readonly connections: number;
+	/** Open sockets from one network address. */
+	readonly connectionsPerAddress: number;
+	/** Rooms open at once (lobbies, matches and results screens). */
+	readonly rooms: number;
+	/** Rooms one guest may create per minute. */
+	readonly roomsPerMinute: number;
+}
+
+const LIMITS: HubLimits = {
+	connections: 5000,
+	connectionsPerAddress: 16,
+	rooms: 2000,
+	roomsPerMinute: 12,
+};
+
 const MESSAGES: Record<ErrorCode, string> = {
 	"bad-message": "The game didn't understand that message.",
 	"say-hello-first": "Connect with a name before doing that.",
@@ -45,6 +65,10 @@ const MESSAGES: Record<ErrorCode, string> = {
 		"A match needs at least two wizards. Invite a friend or add an AI rival.",
 	"bad-setting": "That setting isn't available for this match.",
 	"rate-limited": "Slow down a little.",
+	"server-busy":
+		"The game server is full right now. Try again in a few minutes.",
+	"too-many-connections":
+		"Too many Bookwar windows are open from your network. Close some and try again.",
 };
 
 const NAME_MESSAGES = {
@@ -65,6 +89,7 @@ interface QueueEntry {
 interface Client {
 	readonly id: string;
 	readonly connection: Connection;
+	readonly address: string;
 	guestId: string | null;
 	name: string;
 	tokens: number;
@@ -91,6 +116,7 @@ export interface HubDeps {
 	readonly verifyToken?: (token: string) => Promise<string | null>;
 	/** Saves a finished match that had at least one signed-in player. */
 	readonly recordMatch?: (record: MatchRecord) => Promise<void>;
+	readonly limits?: Partial<HubLimits>;
 }
 
 export class Hub {
@@ -100,6 +126,10 @@ export class Hub {
 	private readonly guestRooms = new Map<string, string>();
 	/** The account of each signed-in guest, from the token in their hello. */
 	private readonly accounts = new Map<string, string>();
+	/** Open sockets per network address. */
+	private readonly addresses = new Map<string, number>();
+	private readonly limits: HubLimits;
+	private readonly roomAllowance = new RateLimiter();
 	private words: Promise<WordList> | null = null;
 	/** The word list once loaded, for work that can't wait (timers). */
 	private loadedWords: WordList | null = null;
@@ -111,7 +141,9 @@ export class Hub {
 		Record<MatchMode, ReturnType<typeof setTimeout>>
 	> = {};
 
-	constructor(private readonly deps: HubDeps) {}
+	constructor(private readonly deps: HubDeps) {
+		this.limits = { ...LIMITS, ...deps.limits };
+	}
 
 	private now(): number {
 		return this.deps.now?.() ?? Date.now();
@@ -131,21 +163,46 @@ export class Hub {
 		return this.words;
 	}
 
-	connect(id: string, send: (message: ServerMessage) => void): void {
+	/**
+	 * A new socket. Returns false (after telling the client why) when the server or the
+	 * client's address already has too many; the caller then closes the socket.
+	 */
+	connect(
+		id: string,
+		send: (message: ServerMessage) => void,
+		address = "unknown",
+	): boolean {
+		const fromAddress = this.addresses.get(address) ?? 0;
+		const refusal: ErrorCode | null =
+			this.clients.size >= this.limits.connections
+				? "server-busy"
+				: fromAddress >= this.limits.connectionsPerAddress
+					? "too-many-connections"
+					: null;
+		if (refusal) {
+			send({ type: "error", code: refusal, message: MESSAGES[refusal] });
+			return false;
+		}
+		this.addresses.set(address, fromAddress + 1);
 		this.clients.set(id, {
 			id,
 			connection: { send },
+			address,
 			guestId: null,
 			name: "",
 			tokens: BURST,
 			refilledAt: this.now(),
 		});
+		return true;
 	}
 
 	disconnect(id: string): void {
 		const client = this.clients.get(id);
 		if (!client) return;
 		this.clients.delete(id);
+		const fromAddress = (this.addresses.get(client.address) ?? 1) - 1;
+		if (fromAddress > 0) this.addresses.set(client.address, fromAddress);
+		else this.addresses.delete(client.address);
 		if (!client.guestId) return;
 		this.roomOf(client.guestId)?.detach(client.guestId, client.connection);
 		this.leaveQueue(client.guestId, client.connection);
@@ -286,6 +343,21 @@ export class Hub {
 					this.fail(client, "bad-setting");
 					return;
 				}
+				if (this.rooms.size >= this.limits.rooms) {
+					this.fail(client, "server-busy");
+					return;
+				}
+				const allowed = this.roomAllowance.take(
+					guestId,
+					1,
+					this.limits.roomsPerMinute,
+					60_000,
+					this.now(),
+				);
+				if (!allowed) {
+					this.fail(client, "rate-limited");
+					return;
+				}
 				const words = await this.loadWords();
 				this.leaveQueue(guestId);
 				room?.leave(guestId);
@@ -304,6 +376,10 @@ export class Hub {
 				return;
 			}
 			case "quickMatch": {
+				if (this.rooms.size >= this.limits.rooms) {
+					this.fail(client, "server-busy");
+					return;
+				}
 				const words = await this.loadWords();
 				room?.leave(guestId);
 				this.leaveQueue(guestId);

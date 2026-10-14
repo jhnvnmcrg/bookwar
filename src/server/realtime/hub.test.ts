@@ -370,3 +370,68 @@ describe("signed-in players", () => {
 		expect(hub.accountOf(ANN)).toBeNull();
 	});
 });
+
+describe("limits", () => {
+	const connectFrom = (target: Hub, id: string, address: string) => {
+		const messages: ServerMessage[] = [];
+		const accepted = target.connect(id, (m) => messages.push(m), address);
+		return { accepted, messages };
+	};
+
+	it("caps open sockets per address and for the whole server", () => {
+		const limited = new Hub({
+			loadWords: loadDictionary,
+			limits: { connections: 3, connectionsPerAddress: 2 },
+		});
+		expect(connectFrom(limited, "a1", "10.0.0.1").accepted).toBe(true);
+		expect(connectFrom(limited, "a2", "10.0.0.1").accepted).toBe(true);
+		const third = connectFrom(limited, "a3", "10.0.0.1");
+		expect(third.accepted).toBe(false);
+		expect(third.messages[0]).toMatchObject({
+			type: "error",
+			code: "too-many-connections",
+		});
+		expect(connectFrom(limited, "b1", "10.0.0.2").accepted).toBe(true);
+		expect(connectFrom(limited, "c1", "10.0.0.3").messages[0]).toMatchObject({
+			code: "server-busy",
+		});
+		limited.disconnect("a1");
+		expect(connectFrom(limited, "a4", "10.0.0.1").accepted).toBe(true);
+	});
+
+	it("limits how fast one guest opens rooms", async () => {
+		const limited = new Hub({
+			loadWords: loadDictionary,
+			limits: { roomsPerMinute: 2 },
+		});
+		const ann = new Socket(limited, "s1");
+		await ann.hello(ANN, "Ann");
+		for (let i = 0; i < 2; i++)
+			await ann.send({ type: "createRoom", mode: "duel", seconds: 120 });
+		expect(limited.rooms.size).toBe(1);
+		await ann.send({ type: "createRoom", mode: "duel", seconds: 120 });
+		expect(ann.last("error")?.code).toBe("rate-limited");
+		vi.advanceTimersByTime(60_000);
+		await ann.send({ type: "createRoom", mode: "duel", seconds: 120 });
+		expect(ann.last("room")).toBeDefined();
+	});
+
+	it("turns new rooms and quick matches away when the server is full", async () => {
+		const limited = new Hub({
+			loadWords: loadDictionary,
+			limits: { rooms: 1 },
+		});
+		const ann = new Socket(limited, "s1");
+		const bob = new Socket(limited, "s2");
+		await ann.hello(ANN, "Ann");
+		await bob.hello(BOB, "Bob");
+		await ann.send({ type: "createRoom", mode: "duel", seconds: 120 });
+		await bob.send({ type: "createRoom", mode: "duel", seconds: 120 });
+		expect(bob.last("error")?.code).toBe("server-busy");
+		await bob.send({ type: "quickMatch", mode: "duel" });
+		expect(bob.last("error")?.code).toBe("server-busy");
+		// Joining an existing room still works.
+		await bob.send({ type: "joinRoom", code: ann.last("room")?.room.code });
+		expect(bob.last("room")?.room.seats).toHaveLength(2);
+	});
+});

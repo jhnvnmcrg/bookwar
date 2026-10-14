@@ -1,5 +1,14 @@
 import { type PointerEvent, useId, useRef } from "react";
-import { type Board, colOf, ROWS, rowOf } from "#/game";
+import {
+	type Board,
+	type Stone as BoardStone,
+	COLS,
+	colOf,
+	ROWS,
+	rowOf,
+	toIndex,
+} from "#/game";
+import type { Glow } from "#/hooks/useMoveFeedback";
 import { gsap, prefersReducedMotion, useGSAP } from "#/lib/gsap";
 import {
 	BOARD_HEIGHT,
@@ -24,6 +33,10 @@ export interface HexBoardProps {
 	readonly locked: boolean;
 	/** Which edge of the board is the losing line. */
 	readonly dangerEdge: "bottom" | "top";
+	/** New crystals to make shine as they land. */
+	readonly glow?: Glow;
+	/** The tower has fallen: the stones tumble off the board. */
+	readonly fallen?: boolean;
 	readonly onPress: (index: number) => void;
 	readonly onDrag: (index: number) => void;
 	readonly onRelease: () => void;
@@ -32,6 +45,42 @@ export interface HexBoardProps {
 }
 
 const FRAME_INSET = 6;
+
+const CRYSTAL_NAMES = ["", "emerald", "sapphire", "ruby", "diamond"];
+
+function spokenStone(stone: BoardStone, row: number): string {
+	const letter = stone.letter === "qu" ? "Qu" : stone.letter.toUpperCase();
+	if (stone.kind === "curse") {
+		const above = ROWS - 1 - row;
+		return `curse ${letter} (${above === 0 ? "on the bottom row" : `${above} ${above === 1 ? "row" : "rows"} above the bottom`})`;
+	}
+	if (stone.kind === "crystal")
+		return `${letter} (${CRYSTAL_NAMES[stone.tier]} crystal)`;
+	return letter;
+}
+
+/** The board as text for screen readers: each column's stones from top to bottom. */
+function BoardText({ board }: { board: Board }) {
+	return (
+		<div className="sr-only">
+			<p>Stones on the board, column by column, top to bottom:</p>
+			<ul>
+				{Array.from({ length: COLS }, (_, col) => {
+					const stones = Array.from({ length: ROWS }, (_, row) => {
+						const stone = board[toIndex(col, row)];
+						return stone ? spokenStone(stone, row) : null;
+					}).filter((text) => text !== null);
+					return (
+						// biome-ignore lint/suspicious/noArrayIndexKey: columns are fixed positions
+						<li key={col}>
+							Column {col + 1}: {stones.length ? stones.join(", ") : "empty"}.
+						</li>
+					);
+				})}
+			</ul>
+		</div>
+	);
+}
 
 /** Links between consecutive selected stones, drawn in the gaps between them. */
 function threadLinks(selection: readonly number[]) {
@@ -49,6 +98,8 @@ export function HexBoard({
 	shuffleKey,
 	locked,
 	dangerEdge,
+	glow,
+	fallen = false,
 	onPress,
 	onDrag,
 	onRelease,
@@ -206,6 +257,54 @@ export function HexBoard({
 		{ dependencies: [shuffleKey], scope: svgRef },
 	);
 
+	// New crystals swell and settle as they land.
+	useGSAP(
+		() => {
+			if (!glow?.key || prefersReducedMotion()) return;
+			const elements = glow.ids.flatMap((id) => {
+				const element = stoneElement(id)?.querySelector(".stone-burst");
+				return element ? [element] : [];
+			});
+			if (elements.length === 0) return;
+			gsap.fromTo(
+				elements,
+				{ scale: 1.5, transformOrigin: "50% 50%" },
+				{ scale: 1, duration: 0.8, delay: 0.38, ease: "elastic.out(1, 0.4)" },
+			);
+		},
+		{ dependencies: [glow?.key], scope: svgRef },
+	);
+
+	// The tower falls: the board shudders and every stone tumbles away.
+	useGSAP(
+		() => {
+			if (!fallen || prefersReducedMotion() || !svgRef.current) return;
+			const all = svgRef.current.querySelectorAll("[data-stone]");
+			gsap
+				.timeline()
+				.fromTo(
+					svgRef.current,
+					{ x: -8 },
+					{ x: 0, duration: 0.5, ease: "elastic.out(1, 0.2)" },
+				)
+				.to(
+					all,
+					{
+						y: `+=${BOARD_HEIGHT}`,
+						rotation: () => gsap.utils.random(-70, 70),
+						transformOrigin: "50% 50%",
+						opacity: 0,
+						duration: 0.8,
+						ease: "power2.in",
+						// Done by ~1.35 s, just before the results appear (solo.$mode.tsx).
+						stagger: { each: 0.006, from: "random" },
+					},
+					0.2,
+				);
+		},
+		{ dependencies: [fallen], scope: svgRef },
+	);
+
 	function toBoardPoint(event: PointerEvent<SVGSVGElement>): Point | null {
 		const matrix = svgRef.current?.getScreenCTM();
 		if (!matrix) return null;
@@ -244,134 +343,137 @@ export function HexBoard({
 	}
 
 	return (
-		// biome-ignore lint/a11y/useSemanticElements: an SVG can't be a <fieldset>; "group" names the board
-		<svg
-			ref={svgRef}
-			viewBox={`0 0 ${BOARD_WIDTH} ${BOARD_HEIGHT}`}
-			className="block h-auto w-full touch-none select-none"
-			role="group"
-			aria-label="Rune board. Tap or drag across touching stones, or type a word."
-			onPointerDown={handlePointerDown}
-			onPointerMove={handlePointerMove}
-			onPointerUp={handlePointerUp}
-			onPointerCancel={handlePointerCancel}
-		>
-			<defs>
-				<StoneDefs prefix={prefix} />
-				<linearGradient id={`${prefix}-page`} x1="0" y1="0" x2="0" y2="1">
-					<stop offset="0%" style={{ stopColor: "var(--lapis-raised)" }} />
-					<stop offset="100%" style={{ stopColor: "var(--lapis-deep)" }} />
-				</linearGradient>
-				<linearGradient
-					id={`${prefix}-danger`}
-					x1="0"
-					y1={dangerEdge === "bottom" ? 0 : 1}
-					x2="0"
-					y2={dangerEdge === "bottom" ? 1 : 0}
-				>
-					<stop
-						offset="0%"
-						style={{ stopColor: "var(--rubric)", stopOpacity: 0 }}
-					/>
-					<stop
-						offset="100%"
-						style={{ stopColor: "var(--rubric)", stopOpacity: 0.32 }}
-					/>
-				</linearGradient>
-				<clipPath id={`${prefix}-clip`}>
-					<rect
-						x={FRAME_INSET}
-						y={FRAME_INSET}
-						width={BOARD_WIDTH - 2 * FRAME_INSET}
-						height={BOARD_HEIGHT - 2 * FRAME_INSET}
-						rx={14}
-					/>
-				</clipPath>
-			</defs>
-
-			{/* The page: lapis ground in a gilded double frame. */}
-			<rect
-				x={FRAME_INSET}
-				y={FRAME_INSET}
-				width={BOARD_WIDTH - 2 * FRAME_INSET}
-				height={BOARD_HEIGHT - 2 * FRAME_INSET}
-				rx={14}
-				fill={`url(#${prefix}-page)`}
-			/>
-			{/* The danger edge glows red: in Classic a curse that sinks to the bottom topples the
-			    tower; in Action, stones piling up to the top bury it. */}
-			<rect
-				x={FRAME_INSET}
-				y={
-					dangerEdge === "bottom"
-						? BOARD_HEIGHT - FRAME_INSET - HEX_HEIGHT * 1.6
-						: FRAME_INSET
-				}
-				width={BOARD_WIDTH - 2 * FRAME_INSET}
-				height={HEX_HEIGHT * 1.6}
-				fill={`url(#${prefix}-danger)`}
-				clipPath={`url(#${prefix}-clip)`}
-			/>
-
-			<g clipPath={`url(#${prefix}-clip)`}>
-				{stones.map(({ stone, index }) => (
-					<g key={stone.id} data-stone={stone.id} style={{ opacity: 0 }}>
-						<g className="stone-burst">
-							<Stone
-								prefix={prefix}
-								letter={stone.letter}
-								kind={stone.kind}
-								tier={stone.kind === "crystal" ? stone.tier : undefined}
-								selected={selected.has(index)}
-								rowsToBottom={
-									stone.kind === "curse" ? ROWS - 1 - rowOf(index) : undefined
-								}
-							/>
-						</g>
-					</g>
-				))}
-			</g>
-
-			<g
-				pointerEvents="none"
-				style={{ stroke: "var(--verdigris)" }}
-				strokeWidth={7}
-				strokeLinecap="round"
+		<>
+			{/* biome-ignore lint/a11y/useSemanticElements: an SVG can't be a <fieldset>; "group" names the board */}
+			<svg
+				ref={svgRef}
+				viewBox={`0 0 ${BOARD_WIDTH} ${BOARD_HEIGHT}`}
+				className="block h-auto w-full touch-none select-none"
+				role="group"
+				aria-label="Rune board. Tap or drag across touching stones, or type a word."
+				onPointerDown={handlePointerDown}
+				onPointerMove={handlePointerMove}
+				onPointerUp={handlePointerUp}
+				onPointerCancel={handlePointerCancel}
 			>
-				{links.map((link) => (
-					<line
-						key={link.key}
-						x1={link.x1}
-						y1={link.y1}
-						x2={link.x2}
-						y2={link.y2}
-					/>
-				))}
-			</g>
+				<defs>
+					<StoneDefs prefix={prefix} />
+					<linearGradient id={`${prefix}-page`} x1="0" y1="0" x2="0" y2="1">
+						<stop offset="0%" style={{ stopColor: "var(--lapis-raised)" }} />
+						<stop offset="100%" style={{ stopColor: "var(--lapis-deep)" }} />
+					</linearGradient>
+					<linearGradient
+						id={`${prefix}-danger`}
+						x1="0"
+						y1={dangerEdge === "bottom" ? 0 : 1}
+						x2="0"
+						y2={dangerEdge === "bottom" ? 1 : 0}
+					>
+						<stop
+							offset="0%"
+							style={{ stopColor: "var(--rubric)", stopOpacity: 0 }}
+						/>
+						<stop
+							offset="100%"
+							style={{ stopColor: "var(--rubric)", stopOpacity: 0.32 }}
+						/>
+					</linearGradient>
+					<clipPath id={`${prefix}-clip`}>
+						<rect
+							x={FRAME_INSET}
+							y={FRAME_INSET}
+							width={BOARD_WIDTH - 2 * FRAME_INSET}
+							height={BOARD_HEIGHT - 2 * FRAME_INSET}
+							rx={14}
+						/>
+					</clipPath>
+				</defs>
 
-			<rect
-				x={FRAME_INSET}
-				y={FRAME_INSET}
-				width={BOARD_WIDTH - 2 * FRAME_INSET}
-				height={BOARD_HEIGHT - 2 * FRAME_INSET}
-				rx={14}
-				fill="none"
-				style={{ stroke: "var(--gold)" }}
-				strokeWidth={3}
-				pointerEvents="none"
-			/>
-			<rect
-				x={1}
-				y={1}
-				width={BOARD_WIDTH - 2}
-				height={BOARD_HEIGHT - 2}
-				rx={18}
-				fill="none"
-				style={{ stroke: "var(--gold)" }}
-				strokeOpacity={0.45}
-				strokeWidth={1.5}
-				pointerEvents="none"
-			/>
-		</svg>
+				{/* The page: lapis ground in a gilded double frame. */}
+				<rect
+					x={FRAME_INSET}
+					y={FRAME_INSET}
+					width={BOARD_WIDTH - 2 * FRAME_INSET}
+					height={BOARD_HEIGHT - 2 * FRAME_INSET}
+					rx={14}
+					fill={`url(#${prefix}-page)`}
+				/>
+				{/* The danger edge glows red: in Classic a curse that sinks to the bottom topples the
+			    tower; in Action, stones piling up to the top bury it. */}
+				<rect
+					x={FRAME_INSET}
+					y={
+						dangerEdge === "bottom"
+							? BOARD_HEIGHT - FRAME_INSET - HEX_HEIGHT * 1.6
+							: FRAME_INSET
+					}
+					width={BOARD_WIDTH - 2 * FRAME_INSET}
+					height={HEX_HEIGHT * 1.6}
+					fill={`url(#${prefix}-danger)`}
+					clipPath={`url(#${prefix}-clip)`}
+				/>
+
+				<g clipPath={`url(#${prefix}-clip)`}>
+					{stones.map(({ stone, index }) => (
+						<g key={stone.id} data-stone={stone.id} style={{ opacity: 0 }}>
+							<g className="stone-burst">
+								<Stone
+									prefix={prefix}
+									letter={stone.letter}
+									kind={stone.kind}
+									tier={stone.kind === "crystal" ? stone.tier : undefined}
+									selected={selected.has(index)}
+									rowsToBottom={
+										stone.kind === "curse" ? ROWS - 1 - rowOf(index) : undefined
+									}
+								/>
+							</g>
+						</g>
+					))}
+				</g>
+
+				<g
+					pointerEvents="none"
+					style={{ stroke: "var(--verdigris)" }}
+					strokeWidth={7}
+					strokeLinecap="round"
+				>
+					{links.map((link) => (
+						<line
+							key={link.key}
+							x1={link.x1}
+							y1={link.y1}
+							x2={link.x2}
+							y2={link.y2}
+						/>
+					))}
+				</g>
+
+				<rect
+					x={FRAME_INSET}
+					y={FRAME_INSET}
+					width={BOARD_WIDTH - 2 * FRAME_INSET}
+					height={BOARD_HEIGHT - 2 * FRAME_INSET}
+					rx={14}
+					fill="none"
+					style={{ stroke: "var(--gold)" }}
+					strokeWidth={3}
+					pointerEvents="none"
+				/>
+				<rect
+					x={1}
+					y={1}
+					width={BOARD_WIDTH - 2}
+					height={BOARD_HEIGHT - 2}
+					rx={18}
+					fill="none"
+					style={{ stroke: "var(--gold)" }}
+					strokeOpacity={0.45}
+					strokeWidth={1.5}
+					pointerEvents="none"
+				/>
+			</svg>
+			<BoardText board={board} />
+		</>
 	);
 }

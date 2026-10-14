@@ -12,6 +12,8 @@ export type SocketStatus = "connecting" | "open" | "reconnecting";
 
 const PING_MS = 5000;
 const MAX_BACKOFF_MS = 5000;
+const TRY_AGAIN_LATER = 1013;
+const BUSY_RETRY_MS = 30_000;
 
 /**
  * Development only: lets browser tests send raw messages through the page's own connection
@@ -119,12 +121,16 @@ export function useMatchSocket(
 					// Ignore anything that isn't a game message.
 				}
 			};
-			socket.onclose = () => {
+			socket.onclose = (event) => {
 				stopPings();
 				if (socketRef.current === socket) socketRef.current = null;
 				if (stopped) return;
 				setStatus("reconnecting");
-				const delay = Math.min(MAX_BACKOFF_MS, 500 * 2 ** attempt++);
+				// 1013: the server is full (it said so before closing); give it time.
+				const delay =
+					event.code === TRY_AGAIN_LATER
+						? BUSY_RETRY_MS
+						: Math.min(MAX_BACKOFF_MS, 500 * 2 ** attempt++);
 				retryTimer = setTimeout(connect, delay);
 			};
 		};

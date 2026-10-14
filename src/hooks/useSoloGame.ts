@@ -24,10 +24,11 @@ import {
 	saveMoves,
 	scoreEntryFor,
 } from "#/lib/guest-storage";
+import { playSound } from "#/lib/sound";
 import { useMoveFeedback } from "./useMoveFeedback";
 import { useWordSelection } from "./useWordSelection";
 
-export type { Banner, Popup } from "./useMoveFeedback";
+export type { Banner, Glow, Popup } from "./useMoveFeedback";
 export type { WordStatus } from "./useWordSelection";
 
 /** Drives the "next stone" bar in Action mode: restart on `key`, run for `durationMs`. */
@@ -137,6 +138,7 @@ export function useSoloGame(
 			state: result.state,
 			events: result.events,
 		};
+		playSound("cast", words.wordOf(path).length);
 		setCasting(path);
 	}
 
@@ -171,6 +173,8 @@ export function useSoloGame(
 		if (!result.ok) return false;
 		const next = result.state;
 		commit(next, action);
+		if (next.status === "playing") playSound("drop");
+		else feedback.show(result.events);
 		const duration = dropInterval(next.level);
 		nextDropAt.current = Date.now() + duration;
 		setDropClock((clock) => ({ key: clock.key + 1, durationMs: duration }));
@@ -260,6 +264,7 @@ export function useSoloGame(
 		nox,
 		popups: feedback.popups,
 		banner: feedback.banner,
+		glow: feedback.glow,
 		press: words.press,
 		drag: words.drag,
 		release: words.release,

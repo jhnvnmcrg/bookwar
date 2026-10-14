@@ -1,0 +1,13 @@
+node_modules
+.output
+.nitro
+.tanstack
+.git
+.env
+.env.*
+!.env.example
+*.local
+.vscode
+.claude
+.agents
+state

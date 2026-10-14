@@ -14,6 +14,7 @@ import {
 	scoreWord,
 } from "#/game";
 import type { Dictionary } from "#/game/dictionary";
+import { playSound } from "#/lib/sound";
 
 export type WordStatus = "empty" | "short" | "valid" | "invalid";
 
@@ -70,8 +71,16 @@ export function useWordSelection({
 	const preview = status === "valid" ? scoreWord(stones).total : 0;
 
 	function setSelection(next: readonly number[]) {
+		if (next.length > selectionRef.current.length)
+			playSound("select", next.length);
 		selectionRef.current = next;
 		setSelectionState(next);
+	}
+
+	/** Shake the selection and tray, with a dull thud (a rejected word or letter). */
+	function reject() {
+		playSound("reject");
+		setRejectKey((count) => count + 1);
 	}
 
 	function wordOf(path: readonly number[]): string {
@@ -146,7 +155,7 @@ export function useWordSelection({
 		if (found) {
 			setSelection(found);
 		} else {
-			setRejectKey((count) => count + 1);
+			reject();
 			onTypeMiss(key);
 		}
 	}
@@ -186,7 +195,7 @@ export function useWordSelection({
 		preview,
 		rejectKey,
 		/** Shake the selection and tray (a rejected word). */
-		shake: () => setRejectKey((key) => key + 1),
+		shake: reject,
 		press,
 		drag,
 		release,

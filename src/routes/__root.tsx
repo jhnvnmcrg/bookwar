@@ -6,6 +6,7 @@ import {
 	Scripts,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
+import { ErrorPage, NotFoundPage } from "../components/brand/ErrorPages";
 import { SkyBackdrop } from "../components/brand/SkyBackdrop";
 import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
 import appCss from "../styles.css?url";
@@ -36,6 +37,15 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 				name: "theme-color",
 				content: "#0c1233",
 			},
+			// Always the night-sky look: dark form controls and scrollbars too.
+			{ name: "color-scheme", content: "dark" },
+			{ property: "og:type", content: "website" },
+			{ property: "og:title", content: "Bookwar" },
+			{
+				property: "og:description",
+				content:
+					"A spellbook word duel: spell words on rune stones, break curses, and duel other wizards.",
+			},
 		],
 		links: [
 			{ rel: "icon", href: "/favicon.svg", type: "image/svg+xml" },
@@ -56,6 +66,8 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 		],
 	}),
 	shellComponent: RootDocument,
+	notFoundComponent: NotFoundPage,
+	errorComponent: ErrorPage,
 });
 
 function RootDocument({ children }: { children: React.ReactNode }) {

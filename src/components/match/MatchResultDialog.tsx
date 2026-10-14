@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Button } from "#/components/ui/button";
+import { playSound } from "#/lib/sound";
 import type { MatchMode, MatchResult, Standing } from "#/shared/protocol";
 import { Nox } from "../brand/Nox";
 
@@ -70,6 +71,10 @@ export function MatchResultDialog({
 	}, []);
 	const outcome =
 		mode === "siege" ? siegeOutcome(result, you) : duelOutcome(result, you);
+	const sound = outcome.happy ? "win" : outcome.draw ? null : "lose";
+	useEffect(() => {
+		if (sound) playSound(sound);
+	}, [sound]);
 
 	return (
 		<div className="fixed inset-0 z-20 grid place-items-center bg-lapis-deep/80 p-4 backdrop-blur-[2px]">

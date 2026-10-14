@@ -1,6 +1,39 @@
+import { useRef, useState } from "react";
 import { type GameState, rankFor, scoreForLevel } from "#/game";
+import { gsap, prefersReducedMotion, useGSAP } from "#/lib/gsap";
 
 const format = (value: number) => value.toLocaleString("en-US");
+
+/** The score, counting up to each new total. GSAP owns the text after the first render. */
+function Score({ value }: { value: number }) {
+	const ref = useRef<HTMLSpanElement>(null);
+	const counter = useRef({ value });
+	const [first] = useState(() => format(value));
+	useGSAP(
+		() => {
+			const element = ref.current;
+			if (!element) return;
+			const show = () => {
+				element.textContent = format(Math.round(counter.current.value));
+			};
+			if (prefersReducedMotion() || value < counter.current.value) {
+				gsap.killTweensOf(counter.current);
+				counter.current.value = value;
+				show();
+				return;
+			}
+			gsap.to(counter.current, {
+				value,
+				duration: 0.6,
+				ease: "power1.out",
+				overwrite: true,
+				onUpdate: show,
+			});
+		},
+		{ dependencies: [value] },
+	);
+	return <span ref={ref}>{first}</span>;
+}
 
 /** Score, rank and progress to the next rank. */
 export function ScorePanel({
@@ -21,7 +54,7 @@ export function ScorePanel({
 			<div>
 				<p className="text-sm text-vellum-dim">Score</p>
 				<p className="figures text-4xl leading-none font-bold text-gold-bright lg:text-5xl">
-					{format(game.score)}
+					<Score value={game.score} />
 				</p>
 			</div>
 			<div className="min-w-44 flex-1 lg:mt-6">

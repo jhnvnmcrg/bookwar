@@ -194,7 +194,9 @@ export type ErrorCode =
 	| "not-in-room"
 	| "need-two-players"
 	| "bad-setting"
-	| "rate-limited";
+	| "rate-limited"
+	| "server-busy"
+	| "too-many-connections";
 
 export type ServerMessage =
 	| { readonly type: "welcome"; readonly serverNow: number }

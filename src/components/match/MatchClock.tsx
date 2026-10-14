@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { playSound } from "#/lib/sound";
 
 /** Re-renders every `ms` while `active`, so clocks stay current. */
 export function useTicker(active: boolean, ms = 250): void {
@@ -15,7 +16,7 @@ export function formatClock(ms: number): string {
 	return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
-/** Time left in the duel, from the server's clock. Turns red in the last 30 seconds. */
+/** Time left in the match or round, from the server's clock. Red in the last 30 seconds. */
 export function MatchClock({
 	endsAt,
 	serverNow,
@@ -37,20 +38,26 @@ export function MatchClock({
 	);
 }
 
-/** 3, 2, 1 over the board before a duel starts. */
+/** 3, 2, 1 over the board before a match starts, with a tick for each number. */
 export function Countdown({
+	what,
 	endsAt,
 	serverNow,
 }: {
+	/** "duel" or "siege". */
+	what: string;
 	endsAt: number;
 	serverNow: () => number;
 }) {
 	useTicker(true, 100);
 	const seconds = Math.max(1, Math.ceil((endsAt - serverNow()) / 1000));
+	useEffect(() => {
+		playSound("tick", seconds);
+	}, [seconds]);
 	return (
 		<div className="absolute inset-0 z-10 grid place-items-center rounded-[18px] bg-lapis-deep/85">
 			<div className="text-center">
-				<p className="text-vellum-dim">The duel begins in</p>
+				<p className="text-vellum-dim">The {what} begins in</p>
 				<p
 					className="figures font-stone text-8xl font-bold text-gold-bright"
 					aria-live="assertive"

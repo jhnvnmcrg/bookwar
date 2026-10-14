@@ -10,8 +10,8 @@ import {
 	ScoreUploadSchema,
 } from "#/shared/accounts";
 import { nameProblem, tidyName } from "#/shared/names";
+import { withinLimit } from "../rate-limit.server";
 import { signedIn } from "./auth-middleware";
-import { withinLimit } from "./rate-limit.server";
 import {
 	accountView,
 	ensureProfile,
@@ -56,6 +56,8 @@ export const renameWizard = createServerFn({ method: "POST" })
 	.handler(async ({ data, context }) => {
 		const nickname = tidyName(data.nickname);
 		if (nameProblem(nickname)) throw new Error("Pick a different name.");
+		if (!withinLimit(`rename:${context.user.userId}`, 1, 10, 60_000))
+			throw new Error("Too many name changes. Try again in a minute.");
 		await renameProfile(context.user.userId, nickname);
 		return { nickname };
 	});

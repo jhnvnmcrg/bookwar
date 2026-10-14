@@ -4,7 +4,13 @@ import {
 	notFound,
 	useNavigate,
 } from "@tanstack/react-router";
-import { type CSSProperties, type ReactNode, useState } from "react";
+import {
+	type CSSProperties,
+	type ReactNode,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { z } from "zod";
 import { Nox } from "#/components/brand/Nox";
 import { HexBoard } from "#/components/game/HexBoard";
@@ -13,6 +19,7 @@ import { LevelBanner } from "#/components/game/LevelBanner";
 import { NoxSays } from "#/components/game/NoxSays";
 import { ProphecyScroll } from "#/components/game/ProphecyScroll";
 import { ScorePanel } from "#/components/game/ScorePanel";
+import { SoundToggle } from "#/components/game/SoundToggle";
 import { WordTray } from "#/components/game/WordTray";
 import { Countdown, MatchClock } from "#/components/match/MatchClock";
 import { MatchLobby } from "#/components/match/MatchLobby";
@@ -30,6 +37,7 @@ import { type NewRoom, useMatch } from "#/hooks/useMatch";
 import { useProfile } from "#/hooks/useProfile";
 import { rename } from "#/lib/account";
 import type { Profile } from "#/lib/profile";
+import { playSound } from "#/lib/sound";
 import {
 	BOT_DIFFICULTIES,
 	DEFAULT_SECONDS,
@@ -168,6 +176,22 @@ function lowestScore(room: RoomView): number | null {
 	return Math.min(...alive.map((seat) => seat.score));
 }
 
+/** "Go" when play starts (and each new Siege round), a gong when a round ends in a cut. */
+function useRoundSounds(phase: RoomView["phase"] | null) {
+	const previous = useRef(phase);
+	useEffect(() => {
+		const before = previous.current;
+		previous.current = phase;
+		if (phase === before) return;
+		if (
+			phase === "playing" &&
+			(before === "countdown" || before === "roundEnd")
+		)
+			playSound("go");
+		else if (phase === "roundEnd") playSound("cut");
+	}, [phase]);
+}
+
 function MatchRoom({
 	code,
 	create,
@@ -183,6 +207,7 @@ function MatchRoom({
 }) {
 	const navigate = useNavigate();
 	const match = useMatch({ code, create, profile, dictionary, onRoomCreated });
+	useRoundSounds(match.room?.phase ?? null);
 	const leave = () => {
 		match.leave();
 		void navigate({ to: "/play" });
@@ -271,6 +296,7 @@ function MatchRoom({
 						endsAt={room.phase === "playing" ? room.phaseEndsAt : null}
 						serverNow={match.serverNow}
 					/>
+					<SoundToggle />
 				</div>
 				{iAmLowest && room.phase === "playing" && (
 					<p
@@ -320,6 +346,8 @@ function MatchRoom({
 							shuffleKey={match.shuffleKey}
 							locked={match.locked}
 							dangerEdge="bottom"
+							glow={match.glow}
+							fallen={me?.out === "tower"}
 							onPress={match.press}
 							onDrag={match.drag}
 							onRelease={match.release}
@@ -329,6 +357,7 @@ function MatchRoom({
 						<LevelBanner banner={match.banner} />
 						{room.phase === "countdown" && room.phaseEndsAt !== null && (
 							<Countdown
+								what={MODE_NAMES[room.mode].toLowerCase()}
 								endsAt={room.phaseEndsAt}
 								serverNow={match.serverNow}
 							/>

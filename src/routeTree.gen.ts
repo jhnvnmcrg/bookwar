@@ -14,6 +14,7 @@ import { Route as AccountRouteImport } from './routes/account'
 import { Route as LeaderboardRouteImport } from './routes/leaderboard'
 import { Route as PlayRouteImport } from './routes/play'
 import { Route as ScoresRouteImport } from './routes/scores'
+import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as QuickModeRouteImport } from './routes/quick.$mode'
 import { Route as RoomCodeRouteImport } from './routes/room.$code'
 import { Route as SoloModeRouteImport } from './routes/solo.$mode'
@@ -43,6 +44,11 @@ const ScoresRoute = ScoresRouteImport.update({
   path: '/scores',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiHealthRoute = ApiHealthRouteImport.update({
+  id: '/api/health',
+  path: '/api/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const QuickModeRoute = QuickModeRouteImport.update({
   id: '/quick/$mode',
   path: '/quick/$mode',
@@ -65,6 +71,7 @@ export interface FileRoutesByFullPath {
   '/leaderboard': typeof LeaderboardRoute
   '/play': typeof PlayRoute
   '/scores': typeof ScoresRoute
+  '/api/health': typeof ApiHealthRoute
   '/quick/$mode': typeof QuickModeRoute
   '/room/$code': typeof RoomCodeRoute
   '/solo/$mode': typeof SoloModeRoute
@@ -75,6 +82,7 @@ export interface FileRoutesByTo {
   '/leaderboard': typeof LeaderboardRoute
   '/play': typeof PlayRoute
   '/scores': typeof ScoresRoute
+  '/api/health': typeof ApiHealthRoute
   '/quick/$mode': typeof QuickModeRoute
   '/room/$code': typeof RoomCodeRoute
   '/solo/$mode': typeof SoloModeRoute
@@ -86,6 +94,7 @@ export interface FileRoutesById {
   '/leaderboard': typeof LeaderboardRoute
   '/play': typeof PlayRoute
   '/scores': typeof ScoresRoute
+  '/api/health': typeof ApiHealthRoute
   '/quick/$mode': typeof QuickModeRoute
   '/room/$code': typeof RoomCodeRoute
   '/solo/$mode': typeof SoloModeRoute
@@ -98,6 +107,7 @@ export interface FileRouteTypes {
     | '/leaderboard'
     | '/play'
     | '/scores'
+    | '/api/health'
     | '/quick/$mode'
     | '/room/$code'
     | '/solo/$mode'
@@ -108,6 +118,7 @@ export interface FileRouteTypes {
     | '/leaderboard'
     | '/play'
     | '/scores'
+    | '/api/health'
     | '/quick/$mode'
     | '/room/$code'
     | '/solo/$mode'
@@ -118,6 +129,7 @@ export interface FileRouteTypes {
     | '/leaderboard'
     | '/play'
     | '/scores'
+    | '/api/health'
     | '/quick/$mode'
     | '/room/$code'
     | '/solo/$mode'
@@ -129,6 +141,7 @@ export interface RootRouteChildren {
   LeaderboardRoute: typeof LeaderboardRoute
   PlayRoute: typeof PlayRoute
   ScoresRoute: typeof ScoresRoute
+  ApiHealthRoute: typeof ApiHealthRoute
   QuickModeRoute: typeof QuickModeRoute
   RoomCodeRoute: typeof RoomCodeRoute
   SoloModeRoute: typeof SoloModeRoute
@@ -171,6 +184,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ScoresRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/health': {
+      id: '/api/health'
+      path: '/api/health'
+      fullPath: '/api/health'
+      preLoaderRoute: typeof ApiHealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/quick/$mode': {
       id: '/quick/$mode'
       path: '/quick/$mode'
@@ -201,6 +221,7 @@ const rootRouteChildren: RootRouteChildren = {
   LeaderboardRoute: LeaderboardRoute,
   PlayRoute: PlayRoute,
   ScoresRoute: ScoresRoute,
+  ApiHealthRoute: ApiHealthRoute,
   QuickModeRoute: QuickModeRoute,
   RoomCodeRoute: RoomCodeRoute,
   SoloModeRoute: SoloModeRoute,
